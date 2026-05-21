@@ -22,4 +22,4 @@ Producer and Consumer both run bound to seperate cores. Because both the Produce
 
 5. ## AI Usage
 
-6. I will not be using any AI-generated code or reccomendations for this project other than where explicitly stated. Currently the only use was generating some of the OUCH decoding code which I found to be unhelpful for learning.
+6. I will not be using any AI-generated code or recomendations for this project other than where explicitly stated. Currently the only use was generating some of the OUCH decoding code which I found to be unhelpful for learning.
