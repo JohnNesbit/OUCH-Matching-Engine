@@ -1,121 +1,185 @@
 #pragma once
 
-// this file was generated partially or wholly by an LLM helper
 
-#include <iostream>
-#include <vector>
-#include <string>
+// parts of this file were AI-generated
+// replace and account information message types were ommitted.
+// I am assuming min_qty is 1 for ease of implementation.
+
+#include <cstdint>
 #include <cstring>
-#include <chrono>
-#include <arpa/inet.h> // For htonl
+#include <cstddef>
 
-// OUCH 5.0 specifications require tight packing
 #pragma pack(push, 1)
-struct Ouch5EnterOrder {
-    char     messageType;       // 'O'
-    char     orderToken[14];    // Alphanumeric
-    char     buySell;           // 'B', 'S', 'T', 'E'
-    uint32_t shares;            // Binary Integer
-    char     stock[8];          // Alphanumeric
-    uint32_t price;             // Binary Integer (Price * 10000)
-    uint32_t timeInForce;       // Binary Integer (Seconds)
-    char     firm[4];           // Alphanumeric
-    char     display;           // 'Y', 'N', 'A', etc.
-    char     capacity;          // 'O', 'A', 'P', 'R'
-    char     isoEligible;       // 'Y', 'N'
-    char     crossType;         // 'N', 'O', 'C', etc.
-    char     customerType;      // 'R', 'B', 'I'
+
+struct OuchEnterOrder {
+    char type;             
+    char token[14];
+    char side;             
+    uint32_t shares;
+    char stock[8];
+    uint32_t price;
+    uint32_t tif;
+    char firm[4];
+    char display;
+    char capacity;
+    char iso;
+    uint32_t min_qty;
+    char cross_type;
 };
+
+struct OuchCancelOrder {
+    char type;             
+    char token[14];
+    uint32_t shares;
+};
+
+struct OuchReplaceOrder {
+    char type;             
+    char existing_token[14];
+    char replacement_token[14];
+    uint32_t shares;
+    uint32_t price;
+    uint32_t tif;
+    char display;
+    char iso;
+    uint32_t min_qty;
+};
+
 #pragma pack(pop)
 
-// Ultra-fast pseudo-random number generator (Xorshift)
-// Far faster than std::mt19937 for tight loops
-class FastRNG {
-    uint64_t state;
-public:
-    FastRNG(uint64_t seed = 123456789) : state(seed) {}
-    
-    inline uint64_t next() {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        return state;
-    }
-};
-
-class OuchGenerator {
+class OuchMockGenerator {
 private:
-    std::vector<uint64_t> m_tickers;
-    size_t m_numTickers;
-    uint64_t m_tokenCounter;
-    FastRNG m_rng;
+    uint64_t seed_state;
+    uint64_t token_seq;
 
-    // Helper to convert a string ticker to a padded 8-byte uint64_t
-    static uint64_t packTicker(const std::string& ticker) {
-        char buf[8] = {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
-        for (size_t i = 0; i < ticker.length() && i < 8; ++i) {
-            buf[i] = ticker[i];
-        }
-        uint64_t val;
-        std::memcpy(&val, buf, 8);
-        return val;
+    // Fast random generation
+    inline uint64_t xorshift64() {
+        seed_state ^= seed_state << 13;
+        seed_state ^= seed_state >> 7;
+        seed_state ^= seed_state << 17;
+        return seed_state;
     }
 
-    // Fast conversion of an integer to 14 hex characters for the Order Token
-    inline void generateToken(char* dest, uint64_t id) {
-        static const char hexChars[] = "0123456789ABCDEF";
-        for(int i = 0; i < 14; ++i) {
-            // Take 4 bits at a time, shift right, apply mask
-            dest[13 - i] = hexChars[(id >> (i * 4)) & 0xF];
-        }
+    // --- State Tracking ---
+    // 1024 is a power of 2, allowing bitwise AND (& 1023) instead of slow modulo (%)
+    static constexpr uint32_t RING_MASK = 1023; 
+    char active_tokens[1024][14];
+    uint32_t token_head;
+
+    // --- Firm Name Pool ---
+    // Stored as uint32_t to allow single-instruction 4-byte assignments
+    uint32_t firm_pool[64];
+
+    // Templates
+    OuchEnterOrder tmpl_enter;
+    OuchCancelOrder tmpl_cancel;
+    OuchReplaceOrder tmpl_replace;
+
+    // Helper to generate a unique 14-byte token rapidly
+    inline void generate_new_token(char* dest, uint64_t r) {
+        uint64_t seq = token_seq++;
+        // Write 8 bytes of entropy
+        *reinterpret_cast<uint64_t*>(dest) = r;
+        // Write 6 bytes of strictly increasing sequence to guarantee uniqueness
+        std::memcpy(dest + 8, &seq, 6); 
     }
 
 public:
-    int counter{};
-
-    OuchGenerator(const std::vector<std::string>& tickers, uint64_t initialSeed = 1337)
-        : m_tokenCounter(1), m_rng(initialSeed) {
+    OuchMockGenerator(uint64_t seed = 88172645463325252ull) 
+        : seed_state(seed), token_seq(1), token_head(0) {
         
-        m_numTickers = tickers.size();
-        m_tickers.reserve(m_numTickers);
-        for (const auto& t : tickers) {
-            m_tickers.push_back(packTicker(t));
+        // 1. Initialize Firm Pool
+        for (int i = 0; i < 64; ++i) {
+            char firm_str[4];
+            firm_str[0] = 'F';
+            firm_str[1] = 'M';
+            firm_str[2] = '0' + (i / 10);
+            firm_str[3] = '0' + (i % 10);
+            // Pre-cast to uint32_t for faster assignment later
+            std::memcpy(&firm_pool[i], firm_str, 4);
         }
+
+        // 2. Prime the ring buffer with dummy tokens so initial Cancels/Replaces are valid
+        for (int i = 0; i < 1024; ++i) {
+            generate_new_token(active_tokens[i], xorshift64());
+        }
+
+        // 3. Initialize Templates
+        std::memset(&tmpl_enter, 0, sizeof(tmpl_enter));
+        tmpl_enter.type = 'O';
+        std::memcpy(tmpl_enter.stock, "AAPL    ", 8);
+        tmpl_enter.tif = 99998; 
+        tmpl_enter.display = 'Y';
+        tmpl_enter.capacity = 'O';
+        tmpl_enter.iso = 'N';
+        tmpl_enter.min_qty = 0;
+        tmpl_enter.cross_type = 'N';
+
+        std::memset(&tmpl_cancel, 0, sizeof(tmpl_cancel));
+        tmpl_cancel.type = 'X';
+
+        std::memset(&tmpl_replace, 0, sizeof(tmpl_replace));
+        tmpl_replace.type = 'U';
+        tmpl_replace.tif = 99998;
+        tmpl_replace.display = 'Y';
+        tmpl_replace.iso = 'N';
+        tmpl_replace.min_qty = 0;
     }
 
-    // Pass the struct by reference to populate it in place. No heap allocations.
-    inline void generate(Ouch5EnterOrder& msg) {
-        ++counter;
-        uint64_t randVal = m_rng.next();
+    // In-place generation
+    inline size_t generate(void* buffer) {
+        uint64_t r = xorshift64();
+        uint8_t dist = r & 0xFF;
 
-        // 1. Static/Hardcoded defaults
-        msg.messageType  = 'O';
-        msg.firm[0]      = 'M'; msg.firm[1] = 'A'; msg.firm[2] = 'K'; msg.firm[3] = 'E'; // e.g. "MAKE"
-        msg.display      = 'Y';
-        msg.capacity     = 'O'; // Principal
-        msg.isoEligible  = 'N';
-        msg.crossType    = 'N';
-        msg.customerType = 'R'; // Retail
+        if (dist < 102) {
+            // --- CANCEL (40%) ---
+            auto* msg = reinterpret_cast<OuchCancelOrder*>(buffer);
+            *msg = tmpl_cancel;
+            
+            // Pick a random known token from the ring buffer
+            uint32_t ring_idx = (r >> 8) & RING_MASK;
+            std::memcpy(msg->token, active_tokens[ring_idx], 14);
+            
+            msg->shares = (r >> 18) & 0x0000FFFF; 
+            return sizeof(OuchCancelOrder);
 
-        // 2. Fast Token Generation
-        generateToken(msg.orderToken, m_tokenCounter++);
+        } else if (dist < 179) {
+            // --- ENTER (30%) ---
+            auto* msg = reinterpret_cast<OuchEnterOrder*>(buffer);
+            *msg = tmpl_enter;
+            
+            // Generate new token and add it to the ring buffer
+            token_head = (token_head + 1) & RING_MASK;
+            generate_new_token(msg->token, r);
+            std::memcpy(active_tokens[token_head], msg->token, 14);
+            
+            // Assign Firm Name (fast 4-byte copy from pool)
+            uint32_t firm_idx = (r >> 8) & 63; // 64 firms
+            *reinterpret_cast<uint32_t*>(msg->firm) = firm_pool[firm_idx];
 
-        // 3. Fast Random B/S indicator (use bottom bit of random val)
-        msg.buySell = (randVal & 1) ? 'B' : 'S';
+            msg->side = (r & 0x4000) ? 'B' : 'S';
+            msg->shares = (r >> 15) & 0x0000FFFF;
+            msg->price = 1500000 + ((r >> 31) & 0xFFF); 
+            return sizeof(OuchEnterOrder);
 
-        // 4. Random Ticker: Cast back to char* via memcpy.
-        // The compiler optimizes this into a single 64-bit register assignment.
-        uint64_t selectedTicker = m_tickers[(randVal >> 1) % m_numTickers];
-        std::memcpy(msg.stock, &selectedTicker, 8);
+        } else {
+            // --- REPLACE (30%) ---
+            auto* msg = reinterpret_cast<OuchReplaceOrder*>(buffer);
+            *msg = tmpl_replace;
+            
+            // 1. Fetch an existing token
+            uint32_t ring_idx = (r >> 8) & RING_MASK;
+            std::memcpy(msg->existing_token, active_tokens[ring_idx], 14);
+            
+            // 2. Generate the replacement token
+            generate_new_token(msg->replacement_token, r ^ 0xAAAAAAAAAAAAAAAAull);
+            
+            // 3. Update the ring buffer in-place so the new token can be modified later
+            std::memcpy(active_tokens[ring_idx], msg->replacement_token, 14);
 
-        // 5. Randomize numeric fields. 
-        // OUCH requires binary fields to be in Network Byte Order (Big Endian).
-        uint32_t shares = 100 * ((randVal >> 16) % 10 + 1); // Random 100 to 1000 shares
-        msg.shares = htonl(shares);
-
-        uint32_t price  = 1000000 + ((randVal >> 24) % 500000); // Random price between 100.00 to 150.00
-        msg.price  = htonl(price);
-
-        msg.timeInForce = htonl(99998); // Standard OUCH representation for Market Hours
+            msg->shares = (r >> 18) & 0x0000FFFF;
+            msg->price = 1500000 + ((r >> 34) & 0xFFF);
+            return sizeof(OuchReplaceOrder);
+        }
     }
 };

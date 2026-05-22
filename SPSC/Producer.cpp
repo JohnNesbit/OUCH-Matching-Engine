@@ -1,7 +1,7 @@
 #include <sys/types.h>
 #include <arpa/inet.h> 
 #include <stdexcept>
-#include <string.h>
+#include <cstring>
 #include <sys/socket.h>
 #include "Producer.hpp"
 #include "SPSC.hpp"

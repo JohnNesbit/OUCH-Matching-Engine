@@ -13,9 +13,9 @@
 
 int main(int argc, char* argv[]){
 
-    //using orderType = Ouch5EnterOrder;
+    //using orderType = OuchEnterOrder;
     //using accumulatorType = OrderBook;
-    //using generatorType = OuchGenerator;
+    //using generatorType = OuchMockGenerator;
 
     using orderType = long;
     using accumulatorType = debugAccumulator;
@@ -39,18 +39,6 @@ int main(int argc, char* argv[]){
     // create incoming orders simulator(make terminate flag to exit after experiments!)
     std::atomic<bool> terminateFlag{false};
     exchangeSimulator<orderType> simulator(port+1, sendSize);
-
-    /*
-    if (std::is_same_v<generatorType, OuchGenerator>) {
-        std::vector<std::string> tickers;
-        for (int i = 0; i < 900; ++i) {
-            tickers.push_back("TICK" + std::to_string(i));
-        }
-
-        generatorType generator(tickers);
-    } else{
-        generatorType generator();
-    }*/
         
     generatorType generator{};
     std::thread exchangeThread(&exchangeSimulator<orderType>::run<generatorType>, &simulator, std::ref(terminateFlag), exchangeQueue.getAddr(), std::ref(generator));
