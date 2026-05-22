@@ -2,6 +2,7 @@
 #include <list>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <atomic>
 #include <map>
 #include <unordered_map>
@@ -49,9 +50,14 @@ class OrderBook {
         // for cancellation, just set side to some out of bounds value, daemon can check!
         void consume(const OuchEnterOrder&); 
         void daemonProcess(); // this just iterates between smallest buyside and largest sellside
-        void updateMaxMin(int);
-        int getOrder(std::list<OuchEnterOrder>&);
+        void updateMaxMin(int, int);
+        void doTrade(OuchEnterOrder& buyOrder, OuchEnterOrder& sellOrder);
         std::ptrdiff_t convertPriceToIndex(int);
+        int checkValid();
+        int getProfit(){return profit;}
+        int getCounter(){return OrderBook::counter;}
+        std::list<OuchEnterOrder>* getBook(){return book;};
+
 
     private:
         // O(1) add to book amortized using vector arraylist implementation
@@ -74,13 +80,16 @@ class OrderBook {
         // 4096 on each side so 8192
 
         // only accessed by daemon but O(1)
-        std::unordered_map<char[4], long> firmHoldings; // hold shares in each company
+        // string view to char[4]
+        std::unordered_map<std::string_view, long> firmHoldings; // hold shares in each company
+
+        long long profit{};
 
         // O(1) cancellation and replacement access
-        std::unordered_map<char[14], OuchEnterOrder&> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
+        std::unordered_map<std::string_view, OuchEnterOrder*> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
         // lower hot-path overhead for the consumer threads!
 
-        int counter;
+        long counter{};
 
 
 };

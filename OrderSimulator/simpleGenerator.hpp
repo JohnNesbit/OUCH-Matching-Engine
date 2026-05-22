@@ -5,8 +5,8 @@ class simpleGenerator {
     public:
         simpleGenerator() : count{} {}
 
-        void generate(long& a) {
-            a = ++count;
+        void generate(long* a) {
+            *a = ++count;
         }
 
         long getCount(){

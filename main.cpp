@@ -13,21 +13,23 @@
 
 int main(int argc, char* argv[]){
 
-    //using orderType = OuchEnterOrder;
-    //using accumulatorType = OrderBook;
-    //using generatorType = OuchMockGenerator;
+    using orderType = OuchEnterOrder;
+    using accumulatorType = OrderBook;
+    using generatorType = OuchMockGenerator;
 
-    using orderType = long;
-    using accumulatorType = debugAccumulator;
-    using generatorType = simpleGenerator;
+    //using orderType = long;
+    //using accumulatorType = debugAccumulator;
+    //using generatorType = simpleGenerator;
 
 
     int port{8080}, bufferSize{128}, sendSize{128};
     switch (argc) { // intentionally fallthrough here
         case 4:
             sendSize = std::atoi(argv[3]);        
+            [[fallthrough]];
         case 3:
             bufferSize = std::atoi(argv[2]);
+            [[fallthrough]];
         case 2:
             port = std::atoi(argv[1]);
     }
@@ -41,8 +43,11 @@ int main(int argc, char* argv[]){
     exchangeSimulator<orderType> simulator(port+1, sendSize);
         
     generatorType generator{};
-    std::thread exchangeThread(&exchangeSimulator<orderType>::run<generatorType>, &simulator, std::ref(terminateFlag), exchangeQueue.getAddr(), std::ref(generator));
-
+    std::thread exchangeThread([&simulator, &terminateFlag, &exchangeQueue, &generator](){
+        simulator.run<generatorType>(terminateFlag, exchangeQueue.getAddr(), generator);
+    });
+    
+    
     // run producer and consumer
     exchangeQueue.run<accumulatorType>(10, accumulator);
 
@@ -52,6 +57,20 @@ int main(int argc, char* argv[]){
     terminateFlag.store(true, std::memory_order_release);
     exchangeThread.join();
 
+
+    std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkValid() - accumulator.getProfit() << std::endl;
+    std::cout << "Total trades processed: " << accumulator.getCounter() << std::endl;
+    std::cout << "Total Profit: " << accumulator.getProfit()/10000 << std::endl;
+
+    auto book = accumulator.getBook();
+    int numOrders;
+    for(int i{}; i < OrderBookConstants::PriceRange; ++i){
+        numOrders += book[i].size();
+    }
+
+    std::cout << "Total Orders Active: " << numOrders << std::endl;
+
+    /*
     int misses = accumulator.getMisses();
 
     std::cout << "Ended Exchange\n";
@@ -59,7 +78,7 @@ int main(int argc, char* argv[]){
     std::cout << "\nMiss rate: " << misses/static_cast<float>(accumulator.getLength());
     std::cout << "\nTotal tranferred: " << accumulator.getLength() << std::endl;
     std::cout << "We sent: " << generator.getCount() << std::endl;
-
+    */
     // we can sleep this thread until console input by sleeping it via "poll" on the console input fd
     // can have an exit within producer and consumer loops, the producer/consumers exit when that value changes
     // just a reference we pass?

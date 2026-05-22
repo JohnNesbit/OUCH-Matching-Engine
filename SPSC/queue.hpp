@@ -19,7 +19,7 @@ namespace MSG_GLOBALS {
 template <class T>
 struct queue{
     int bufferSize;
-    std::atomic<int> bufferTailIndex{1}; // we are always going to be 
+    std::atomic<int> bufferTailIndex{}; // we always start producing before consuming so its fine... usually
     std::atomic<int> bufferHeadIndex{};
     std::allocator<T> allocator;
     T* buffer;

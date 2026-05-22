@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <numeric>
 #include <cstddef>
 #include <cstring>
 #include "OrderSimulator/OUCH.hpp"
@@ -24,112 +25,86 @@
 
 OrderBook::OrderBook(){} // default construction of std::map and std::vector is good!
 
+int OrderBook::checkValid(){
+    return std::accumulate(firmHoldings.begin(), firmHoldings.end(), 0, [](int sum, auto& a){
+        return sum + a.second;
+
+    });
+}
+
 inline std::ptrdiff_t OrderBook::convertPriceToIndex(int price){
     return price - OrderBookConstants::openingCrossPrice + OrderBookConstants::PriceRange/2;
 }
 
-void OrderBook::updateMaxMin(int price){
-    if (std::max(price, currentMaxBuyPrice) == price) currentMaxBuyPrice = price; // should we let this speculatively execute on this control dependency of daemon?
-    if (std::min(price, currentMinSellPrice) == price) currentMinSellPrice = price;
+void OrderBook::updateMaxMin(int price, int side){
+    if(side == 'S'){
+        if (std::min(price, currentMinSellPrice) == price) currentMinSellPrice = price;
+    } else{
+        if (std::max(price, currentMaxBuyPrice) == price) currentMaxBuyPrice = price; // should we let this speculatively execute on this control dependency of daemon?
+    }
+    
 }
 
-
-
-void doTrade(){}
-
-int OrderBook::getOrder(std::list<OuchEnterOrder>& orderList){
-
-    // flag for if already checked
-
-    // this is literally just prepping the orderbook to be used easily. This is going to get called every trade so we should grab a flag for having been getOrdered
-    // check cancellation and update for buyer
-    // need to have a  loop on the token existing in the update map because we might have multiple chained reassignments!
-    while(!orderList.empty()){
-
-        auto it = cancellationUpdateMap.find(orderList.front().token); // to be in while's scope
-        if (it != cancellationUpdateMap.end()){ // if there is a change to the order
-
-            if (it->second.type == 'X') {// fisrt is type, skip this if cancelled
-                orderList.pop_front();
-            } 
-            
-
-            if (it->second.type == 'U') { // updated, do the replacement and re-run to catch if there have been multiple chained replacements
-                
-                // loop here to find the true last update. Some overhead to ensure correctness for multiple updates.
-                auto temp = cancellationUpdateMap.find(it->second.replacement_token);
-                while(temp != cancellationUpdateMap.end() && temp->second.type == 'U'){
-                    it = temp;
-                    temp = cancellationUpdateMap.find(it->second.replacement_token);
-                }
-
-                // it is the end of the replacements chain, check if it is a cancel
-                if (temp->second.type == 'X'){
-                    orderList.pop_front();
-                }
-
-                // copy over replacement token for future use
-                strncpy(orderList.front().token, it->second.replacement_token, OrderBookConstants::tokenLength); // horrible magic but this is the standard so its fine.
-                orderList.front().shares = it->second.shares;
-                    
-                 // this is our true order!
-                // problem: what happens if we get replaced again? We need to write the replacement value!
-                // O(1) so not the worst I guess...
-            }
-        }
+void OrderBook::doTrade(OuchEnterOrder& buyOrder, OuchEnterOrder& sellOrder){
+    if (buyOrder.shares >= sellOrder.shares){
+        buyOrder.shares -= sellOrder.shares;
+        profit += sellOrder.shares * (sellOrder.price - buyOrder.price);
+        firmHoldings[sellOrder.firm] += sellOrder.shares * sellOrder.price;
+        firmHoldings[buyOrder.firm] -= sellOrder.shares * buyOrder.price; // scam 'em
+    } else{
+        sellOrder.shares -= buyOrder.shares;
+        profit += buyOrder.shares * (sellOrder.price - buyOrder.price);
+        firmHoldings[sellOrder.firm] += buyOrder.shares * sellOrder.price;
+        firmHoldings[buyOrder.firm] -= buyOrder.shares * buyOrder.price;
     }
 }
-/*
-    char type;             
-    char existing_token[14];
-    char replacement_token[14];
-    uint32_t shares;
-    uint32_t price;
-*/
 
 // NOTE: all of these are limit orders as specified by the OUCH standard
 void OrderBook::consume(const OuchEnterOrder& order) {
-
+    ++OrderBook::counter;
     switch (order.type){
         case 'O':
-            updateMaxMin(order.price);
+            updateMaxMin(order.price, order.side);
             book[convertPriceToIndex(order.price)].push_back(order);
-            tokenMap[order.token] = book[convertPriceToIndex(order.price)].back();
-            return;
+            tokenMap[order.token] = &book[convertPriceToIndex(order.price)].back();
+            break;
         case 'U':
+        {
             const OuchReplaceOrder& replaceOrder = reinterpret_cast<const OuchReplaceOrder&>(order);
             
             // check that this order to update actually exists
             auto it = tokenMap.find(replaceOrder.existing_token);
             if (it != tokenMap.end()){ 
 
-                if(it->second.type == 'X') {return;} // if cancelled, we don't need to replace!
+                if(it->second->type == 'X') {return;} // if cancelled, we don't need to replace!
 
                 // create new order *updated*
-                updateMaxMin(replaceOrder.price);
+                updateMaxMin(replaceOrder.price, it->second->side);
 
                 // we are copying over the original order and then changing the fields which is dumb. Original is modified but it is cancelled anyway
-                it->second.shares = replaceOrder.shares;
-                it->second.price = replaceOrder.price;
-                strncpy(it->second.token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
-                book[convertPriceToIndex(replaceOrder.price)].push_back(it->second); 
-                tokenMap[replaceOrder.replacement_token] = book[convertPriceToIndex(replaceOrder.price)].back();
+                it->second->shares = replaceOrder.shares;
+                it->second->price = replaceOrder.price;
+                strncpy(it->second->token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
+                book[convertPriceToIndex(replaceOrder.price)].push_back(*it->second); 
+                tokenMap[replaceOrder.replacement_token] = &book[convertPriceToIndex(replaceOrder.price)].back();
                 
                 // cancel the original
-                it->second.type = 'X';
+                it->second->type = 'X';
             }
             // if order didn't exist, we do nothing
-            return;
+            break;
+        }
          case 'X': 
+         {
             const OuchCancelOrder& cancelOrder = reinterpret_cast<const OuchCancelOrder&>(order);
             auto it = tokenMap.find(cancelOrder.token);
             if (it != tokenMap.end()){ // if real
-                it->second.type = 'X'; // cancel
+                it->second->type = 'X'; // cancel
             }
             // Technically we should update continusouly before we cancel, but that is up to details, and.... its easier to write the boring code for this version
-            return;
+            break;
+         }
     };
-    ++counter;
 
     // don't cross the book!
     // this is amortize O(1) because we necessarily don't do more than one execution per order(more like .3 per order)
@@ -152,7 +127,7 @@ void OrderBook::consume(const OuchEnterOrder& order) {
 
         // getOrder() - this function gets the next order up for sell/buy side once the last one was exhausted?
         // maybe this is literally just the updateOrCancelOrder() function since we are updating the index and the price here manually!
-        // okay so make this just updateOrCancelOrder. If it is cancelled, we should genuinely just return a std::optional<> with error flag?\
+        // okay so make this just updateOrCancelOrder. If it is cancelled, we should genuinely just return a std::optional<> with error flag?
         // actually... we are updating this in-place so we don't need ot have indecies at all! Just check list emptiness and call getOrder()
         // can just do -1 if fails!
 
@@ -183,17 +158,21 @@ void OrderBook::consume(const OuchEnterOrder& order) {
         }
 
         // get to max buy side 
-        while (buyList.front().type == 'X' || buyList.front().side != 'B' || buyList.front().shares == 0){
+        while (!buyList.empty() && (buyList.front().type == 'X' || buyList.front().side != 'B' || buyList.front().shares == 0)){
+            tokenMap.erase(buyList.front().token);
             buyList.pop_front();
         }
 
         // minimum sell side 
-        while (sellList.front().type == 'X' || sellList.front().side != 'B' || sellList.front().shares == 0){
+        while (!sellList.empty() && (sellList.front().type == 'X' || sellList.front().side != 'B' || sellList.front().shares == 0)){
+            tokenMap.erase(sellList.front().token);
             sellList.pop_front();
         }
 
         // do the trade and continue
-        doTrade(buyList, sellList);
+        if(!buyList.empty() && !sellList.empty()) {
+            doTrade(buyList.front(), sellList.front());
+        }
     }
 }
         

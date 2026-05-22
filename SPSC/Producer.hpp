@@ -69,8 +69,8 @@ class Producer {
 
     private:
         int sockfd; 
-        int bufferSize;
         int port;
+        int bufferSize;
         struct iovec iovecs[MSG_GLOBALS::MSG_BATCH_SIZE];
         struct mmsghdr msgs[MSG_GLOBALS::MSG_BATCH_SIZE];
         struct timespec timeout;
@@ -82,7 +82,7 @@ inline int Producer::maxPull(int t, int h){ // probably fine to inline
         return (h - t) - 1;
     }
     if (h < t){ // awful because this means we genuinely eat the tail :/
-        bufferSize - (t - h);
+        return bufferSize - (t - h);
     }
     return bufferSize;
 }
@@ -102,7 +102,7 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
     // update msg
     int retval;
     int tail;
-    size_t i{};
+    int i{};
     while(!terminateFlag.load(std::memory_order_relaxed)){ // can use volatile here for intel bc of ordering guarentees I think, but complies to same thing 
         i = 0; // maxPull calcs the number of cells left between tail and head so tail does not eat head!
 
