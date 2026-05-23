@@ -1,28 +1,33 @@
 #include <vector>
 #include <algorithm>
+#include <numeric>
 
 class debugAccumulator{
 
     private:
-        std::vector<long> receivedList;
+        long max{};
+        long min{std::numeric_limits<int>::max()};
+        long counter;
 
     public:
         void consume(long a){
-            receivedList.push_back(a);
+            max = std::max(max, a);
+            min = std::min(min, a);
+            ++counter;
         }
 
         int getCounter(){
-            return getLength();
+            return counter;
         }
 
-        int getMax() {
-            return *std::max_element(receivedList.begin(), receivedList.end());
+        long getMax() {
+            return max;
         }
-        int getMin() {
-            return *std::min_element(receivedList.begin(), receivedList.end());
+        long getMin() {
+            return min;
         }
         int getLength() {
-            return receivedList.size();
+            return counter;
         }
         int getMisses(){
             return (getMax() - getMin()) - getLength();

@@ -10,17 +10,17 @@ concept isConsumerOf = requires(T consumed, A consumer) {
 };
 
 namespace MSG_GLOBALS {
-    constexpr int MSG_BATCH_SIZE = 10;
+    constexpr int MSG_BATCH_SIZE = 128;
     constexpr int MSG_MAX_SIZE = 128;//193; // max size of an OUCH message with all flags is 193 bytes
-    constexpr double TIMEOUT = 10; // 1ms timeout
+    constexpr double TIMEOUT = 30; // 1ms timeout
 }
 
 // we do std::allocator and break RAII so that T does not need to be default constructable!
 template <class T>
 struct queue{
-    int bufferSize;
-    std::atomic<int> bufferTailIndex{}; // we always start producing before consuming so its fine... usually
-    std::atomic<int> bufferHeadIndex{};
+    alignas(64) int bufferSize;
+    alignas(64) std::atomic<int> bufferTailIndex{}; // we always start producing before consuming so its fine... usually
+    alignas(64) std::atomic<int> bufferHeadIndex{};
     std::allocator<T> allocator;
     T* buffer;
 

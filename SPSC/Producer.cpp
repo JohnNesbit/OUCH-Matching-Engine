@@ -50,8 +50,8 @@ Producer::Producer (int port, int bufferSize)
     timeout.tv_nsec = 0;
 
     // zero these
-    std::memset(iovecs, 0, sizeof(iovecs)*std::size(iovecs));
-    std::memset(msgs, 0, sizeof(msgs)*std::size(msgs));
+    //std::memset(iovecs, 0, sizeof(iovecs)*std::size(iovecs));
+    //std::memset(msgs, 0, sizeof(msgs)*std::size(msgs));
 
     // initalize msg
     for (size_t i{0}; i < MSG_GLOBALS::MSG_BATCH_SIZE; ++i) {

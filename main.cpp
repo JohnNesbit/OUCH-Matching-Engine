@@ -11,7 +11,7 @@
 #include "OrderSimulator/OUCH.hpp"
 #include "OrderBook/OrderBook.hpp"
 #include "OrderBook/debugAccumulator.hpp"
-#define DEBUGSIM 1
+//#define DEBUGSIM 1
 
 int main(int argc, char* argv[]){
 
@@ -147,11 +147,11 @@ int main(int argc, char* argv[]){
 #endif
 #ifdef DEBUGSIM
     
-    int misses = accumulator.getMisses();
+    int misses = accumulator.getMisses() - 128;
 
     std::cout << "Ended Exchange\n";
     std::cout << "Total misses: " << misses;
-    //std::cout << "\nMiss rate: " << misses/static_cast<float>(accumulator.getLength());
+    std::cout << "\nMiss rate: " << misses/static_cast<float>(accumulator.getLength());
     std::cout << "\nTotal tranferred: " << accumulator.getLength() << std::endl;
     std::cout << "We sent: " << generator.getCount() << std::endl;
 #endif

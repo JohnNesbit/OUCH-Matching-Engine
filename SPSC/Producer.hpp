@@ -1,6 +1,7 @@
 #pragma once
 #include <arpa/inet.h> 
 #include <atomic>
+#include <iostream>
 #include "queue.hpp"
 
 
@@ -82,48 +83,56 @@ inline int Producer::maxPull(int t, int h){ // probably fine to inline
         return (h - t) - 1;
     }
     if (h < t){ // awful because this means we genuinely eat the tail :/
-        return ((bufferSize - t) + (h - 1))  % bufferSize;
+        return bufferSize - (t - h);
+        //return ((bufferSize - t) + (h - 1))  % bufferSize;
     }
-    return bufferSize;
+    return bufferSize-1;
 }
 
 template <class T>
+__attribute__((noinline))
 void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epoll would only make sense if there were a bunch of sockets! Since we are UDP, we just grab in batches
     
     // recvmmsg
     // allows for pulling of whole queue maybe so less 50-100ns mode switches
 
+    
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(5, &cpuset); // Bind to core 7
+    CPU_SET(6, &cpuset); // Bind to core 7
     pthread_t current_thread = pthread_self();
     pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset); 
+    
 
     // update msg
     int retval;
-    int tail;
+    int tail = q.bufferTailIndex.load(std::memory_order_relaxed);
+    long producerRecieved{};
     int i{};
     while(!terminateFlag.load(std::memory_order_relaxed)){ // can use volatile here for intel bc of ordering guarentees I think, but complies to same thing 
         i = 0; // maxPull calcs the number of cells left between tail and head so tail does not eat head!
 
         // how do we actually need the compiler to order these accesses?
-        tail = q.bufferTailIndex.load(std::memory_order_relaxed); // premature optimization for my brain :)
-        for (; i < min(MSG_GLOBALS::MSG_BATCH_SIZE, maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++) { // how do we vectorize this loop? -- optimzation potential with changing to struct of arrays for AVX
+         // premature optimization for my brain :)
+        for (; i < min(MSG_GLOBALS::MSG_BATCH_SIZE, maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++){//min( ,maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++) { // how do we vectorize this loop? -- optimzation potential with changing to struct of arrays for AVX
             //msgs[i].msg_hdr.msg_iov->iov_base = buffer[bufferFrontIndex+i].message // update where to store messages! put at the tail of ring buffer
             // equivalent line of code is:
-            iovecs[i].iov_base = &q.buffer[(tail+i) % q.bufferSize];
+            iovecs[i].iov_base = &q.buffer[(tail+i) % q.bufferSize]; // doesnt actually do access so no false sharing
             // this is because the msg_iov is just references to the iovecs array and by updating like that, we don't chase pointers and have spatial locailty
             // for this, could use AVX-512 scatter to do basically divide this loop by a lot if it becomes a bottleneck(max linux cap for msg storage is 4096 so probably not)
         }
-
+        
         // this just tells kernel to write our messages to the buffer, we update where our tail is, and we keep going!
         retval = recvmmsg(sockfd, msgs, i, 0, &timeout); // we only want to give the amount of messages as max that we can add to the ring buffer legally
         if (retval >= 0){
-            q.bufferTailIndex.store((retval + tail) % q.bufferSize, std::memory_order_release);  // don't want to fill in the buffer after telling the conusmer we have, release adds a fence here so we dont
+            producerRecieved += retval;
+            tail = (retval + tail) % q.bufferSize;
+            q.bufferTailIndex.store(tail, std::memory_order_release);  // don't want to fill in the buffer after telling the conusmer we have, release adds a fence here so we dont
         }// else {
         //    throw std::runtime_error("Failed to retrieve messages from kernel");
         //}
         
     }
+    std::cout << producerRecieved << std::endl;
 
 }

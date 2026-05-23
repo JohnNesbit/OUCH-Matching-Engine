@@ -37,7 +37,7 @@ void SPSC<T>::run(int consumeBatchSize, A& accumulator, int time){
 
     std::cout << "Starting...\n";
 
-    terminateFlag.store(false, std::memory_order_relaxed); // this necesarily syncs on std::thread due to fencing
+    //terminateFlag.store(false, std::memory_order_relaxed); // this necesarily syncs on std::thread due to fencing
 
     std::thread producerThread(&Producer::PollSocket<T>, &prod, std::ref(terminateFlag), std::ref(q));
     std::thread consumerThread(&ConsumeQueue<T, A>, std::ref(terminateFlag), consumeBatchSize, std::ref(q), std::ref(accumulator));
