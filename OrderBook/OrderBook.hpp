@@ -53,7 +53,7 @@ class OrderBook {
         void updateMaxMin(int, int);
         void doTrade(OuchEnterOrder& buyOrder, OuchEnterOrder& sellOrder);
         std::ptrdiff_t convertPriceToIndex(int);
-        int checkValid();
+        long long checkValid();
         long long getProfit(){return profit;}
         long getCounter(){return OrderBook::counter;}
         std::list<OuchEnterOrder>* getBook(){return book;};
@@ -85,7 +85,7 @@ class OrderBook {
 
         // only accessed by daemon but O(1)
         // string view to char[4]
-        std::unordered_map<std::string_view, long> firmHoldings; // hold shares in each company
+        std::unordered_map<std::string_view, long long> firmHoldings; // hold shares in each company
 
         long long profit{};
 
@@ -94,7 +94,7 @@ class OrderBook {
         std::unordered_map<std::string_view, OuchEnterOrder*> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
         // lower hot-path overhead for the consumer threads!
 
-        long counter{};
+        long counter{0};
 
 
 };

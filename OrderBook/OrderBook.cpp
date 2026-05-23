@@ -2,6 +2,7 @@
 #include <numeric>
 #include <cstddef>
 #include <cstring>
+#include <string_view>
 #include <exception>
 #include "OrderSimulator/OUCH.hpp"
 #include "OrderBook.hpp"
@@ -26,8 +27,8 @@
 
 OrderBook::OrderBook(){} // default construction of std::map and std::vector is good!
 
-int OrderBook::checkValid(){
-    return std::accumulate(firmHoldings.begin(), firmHoldings.end(), 0, [](int sum, auto& a){
+long long OrderBook::checkValid(){
+    return std::accumulate(firmHoldings.begin(), firmHoldings.end(), 0, [](long long sum, auto& a){
         return sum + a.second;
 
     });
@@ -53,15 +54,15 @@ void OrderBook::updateMaxMin(int price, int side){
 void OrderBook::doTrade(OuchEnterOrder& buyOrder, OuchEnterOrder& sellOrder){
     if (buyOrder.shares >= sellOrder.shares){
         buyOrder.shares -= sellOrder.shares;
-        profit += sellOrder.shares * (buyOrder.price - sellOrder.price);
-        firmHoldings[sellOrder.firm] += sellOrder.shares * sellOrder.price;
-        firmHoldings[buyOrder.firm] -= sellOrder.shares * buyOrder.price; // scam 'em
+        //profit += sellOrder.shares * (buyOrder.price - static_cast<long>(sellOrder.price));
+        firmHoldings[std::string_view(sellOrder.firm, 4)] += sellOrder.shares * static_cast<long>(buyOrder.price); // need to change to resting price!
+        firmHoldings[std::string_view(buyOrder.firm, 4)] -= sellOrder.shares * static_cast<long>(buyOrder.price); 
         sellOrder.shares = 0;
     } else{
         sellOrder.shares -= buyOrder.shares;
-        profit += buyOrder.shares * (buyOrder.price - sellOrder.price);
-        firmHoldings[sellOrder.firm] += buyOrder.shares * sellOrder.price;
-        firmHoldings[buyOrder.firm] -= buyOrder.shares * buyOrder.price;
+        //profit += buyOrder.shares * (buyOrder.price - static_cast<long>(sellOrder.price));
+        firmHoldings[std::string_view(sellOrder.firm, 4)] += buyOrder.shares * static_cast<long>(buyOrder.price);
+        firmHoldings[std::string_view(buyOrder.firm, 4)] -= buyOrder.shares * static_cast<long>(buyOrder.price);
         buyOrder.shares = 0;
     }
 }

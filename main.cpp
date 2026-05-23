@@ -73,7 +73,6 @@ int main(int argc, char* argv[]){
     }
 
     std::cout << "Total Orders Active: " << numOrders << std::endl;
-
     /*
     int misses = accumulator.getMisses();
 
@@ -83,6 +82,7 @@ int main(int argc, char* argv[]){
     std::cout << "\nTotal tranferred: " << accumulator.getLength() << std::endl;
     std::cout << "We sent: " << generator.getCount() << std::endl;
     */
+
     // we can sleep this thread until console input by sleeping it via "poll" on the console input fd
     // can have an exit within producer and consumer loops, the producer/consumers exit when that value changes
     // just a reference we pass?
