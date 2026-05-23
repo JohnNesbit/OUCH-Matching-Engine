@@ -82,7 +82,7 @@ inline int Producer::maxPull(int t, int h){ // probably fine to inline
         return (h - t) - 1;
     }
     if (h < t){ // awful because this means we genuinely eat the tail :/
-        return bufferSize - (t - h);
+        return ((bufferSize - t) + (h - 1))  % bufferSize;
     }
     return bufferSize;
 }

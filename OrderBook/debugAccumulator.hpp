@@ -7,8 +7,12 @@ class debugAccumulator{
         std::vector<long> receivedList;
 
     public:
-        void consume(const long& a){
+        void consume(long a){
             receivedList.push_back(a);
+        }
+
+        int getCounter(){
+            return getLength();
         }
 
         int getMax() {

@@ -11,7 +11,7 @@
 inline int maxPull(int t, int h, int bufferSize){ // fix this.
     //std::cout << "Head:"
     if (h > t){
-        return ((bufferSize - h) + (t - 1)) % bufferSize;
+        return ((bufferSize - h) + (t - 1))  % bufferSize;
         
     }
     if (h < t){ // awful because this means we genuinely eat the tail :/

@@ -43,6 +43,9 @@ class exchangeSimulator {
             allocator.deallocate(sendBuffer, batchSize);
         }
 
+        int getCounter(){return counter;}
+        void clearCounter(){counter = 0;}
+
         // rule of 5 because we broke RAII and needed a destructor(unique_ptr default initializes objects and we dont want to default construct!)
         exchangeSimulator(const exchangeSimulator&) = delete;
         exchangeSimulator(exchangeSimulator&&) = delete;
@@ -53,6 +56,7 @@ class exchangeSimulator {
         int sockfd;
         int port;
         int batchSize;
+        int counter{};
         struct sockaddr_in addr;
         std::allocator<T> allocator; // define allocator before so member initializer list goes in the right order!
         std::unique_ptr<struct mmsghdr[]> msgs; // we use unique_ptr to C-style instead of vectors because vectors don't let us get non-const refs to their elements
@@ -122,6 +126,7 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
 
         for(int i{}; i < batchSize; ++i){
             generator.generate(&sendBuffer[i]); // pass as reference, in-place construction of type T, do it this way because std::vector makes the object construct its self with .emplace()
+            counter++;
         }        
         /*
                int sendmmsg(unsigned int n;

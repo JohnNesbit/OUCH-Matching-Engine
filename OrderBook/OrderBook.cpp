@@ -43,11 +43,7 @@ long long OrderBook::checkFlowValid(){
 }
 
 inline std::ptrdiff_t OrderBook::convertPriceToIndex(int price){
-    int p = price - OrderBookConstants::openingCrossPrice + OrderBookConstants::PriceRange/2;
-    if (p > 0 && p < OrderBookConstants::PriceRange) return p;
-    else{
-        throw std::exception();
-    }
+    return price - OrderBookConstants::openingCrossPrice;
 }
 
 void OrderBook::updateMaxMin(int price, int side){

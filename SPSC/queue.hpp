@@ -30,6 +30,11 @@ struct queue{
         allocator.deallocate(buffer, bufferSize);
     }
 
+    void clear(){
+        bufferTailIndex.store(0);
+        bufferHeadIndex.store(0);
+    }
+
     queue& operator=(queue&) = delete;
     queue& operator=(queue&&) = delete;
     queue(queue&) = delete;
