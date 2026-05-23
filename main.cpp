@@ -21,9 +21,9 @@ int main(int argc, char* argv[]){
     using generatorType = OuchMockGenerator;
 #endif
 #ifdef DEBUGSIM
-    using orderType = long;
+    using orderType = long; //long; OuchEnterOrder
     using accumulatorType = debugAccumulator;
-    using generatorType = simpleGenerator;
+    using generatorType = simpleGenerator; //OuchMockGenerator; simpleGenerator
 #endif
 
     int time{1000}; // one second experiment
@@ -147,13 +147,13 @@ int main(int argc, char* argv[]){
 #endif
 #ifdef DEBUGSIM
     
-    int misses = accumulator.getMisses() - 128;
+    //int misses = accumulator.getMisses() - 128;
 
     std::cout << "Ended Exchange\n";
-    std::cout << "Total misses: " << misses;
-    std::cout << "\nMiss rate: " << misses/static_cast<float>(accumulator.getLength());
+    //std::cout << "Total misses: " << misses;
+    //std::cout << "\nMiss rate: " << misses/static_cast<float>(accumulator.getLength());
     std::cout << "\nTotal tranferred: " << accumulator.getLength() << std::endl;
-    std::cout << "We sent: " << generator.getCount() << std::endl;
+    //std::cout << "We sent: " << generator.getCount() << std::endl;
 #endif
 
     // we can sleep this thread until console input by sleeping it via "poll" on the console input fd

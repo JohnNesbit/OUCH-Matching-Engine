@@ -2,6 +2,7 @@
 #include <arpa/inet.h> 
 #include <atomic>
 #include <iostream>
+#include <errno.h>
 #include "queue.hpp"
 
 
@@ -79,14 +80,19 @@ class Producer {
 };
 
 inline int Producer::maxPull(int t, int h){ // probably fine to inline
+    return (h - t - 1 + bufferSize) % bufferSize;
+    /*
+    // both consumer and producer can only get up to 1 cell before the head/tail. We initialize at 0 because producer is first and have special case there.
     if (h > t){
         return (h - t) - 1;
     }
     if (h < t){ // awful because this means we genuinely eat the tail :/
-        return bufferSize - (t - h);
-        //return ((bufferSize - t) + (h - 1))  % bufferSize;
+        return ((bufferSize - t) + (h - 1))  % bufferSize;
     }
-    return bufferSize-1;
+    if(t == 0 && h == 0){
+        return bufferSize-1;
+    }
+    return -1; //error condition! They should never overlap nonzero*/
 }
 
 template <class T>
@@ -115,7 +121,7 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
         // how do we actually need the compiler to order these accesses?
          // premature optimization for my brain :)
         for (; i < min(MSG_GLOBALS::MSG_BATCH_SIZE, maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++){//min( ,maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++) { // how do we vectorize this loop? -- optimzation potential with changing to struct of arrays for AVX
-            //msgs[i].msg_hdr.msg_iov->iov_base = buffer[bufferFrontIndex+i].message // update where to store messages! put at the tail of ring buffer
+            //msgs[i].msg_hdr.msg_iov->iov_base = &q.buffer[tail+i % q.bufferSize] // update where to store messages! put at the tail of ring buffer
             // equivalent line of code is:
             iovecs[i].iov_base = &q.buffer[(tail+i) % q.bufferSize]; // doesnt actually do access so no false sharing
             // this is because the msg_iov is just references to the iovecs array and by updating like that, we don't chase pointers and have spatial locailty
@@ -128,9 +134,10 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
             producerRecieved += retval;
             tail = (retval + tail) % q.bufferSize;
             q.bufferTailIndex.store(tail, std::memory_order_release);  // don't want to fill in the buffer after telling the conusmer we have, release adds a fence here so we dont
-        }// else {
-        //    throw std::runtime_error("Failed to retrieve messages from kernel");
-        //}
+        }else {
+            std::cout << errno << std::endl;
+            throw std::runtime_error("Failed to retrieve messages from kernel");
+        }
         
     }
     std::cout << producerRecieved << std::endl;

@@ -77,6 +77,7 @@ void OrderBook::doTrade(OuchOrderWrapper& buyOrder, OuchOrderWrapper& sellOrder)
 }
 
 // NOTE: all of these are limit orders as specified by the OUCH standard
+__attribute__((noinline))
 void OrderBook::consume(const OuchEnterOrder& order) {
     ++OrderBook::counter;
     switch (order.type){

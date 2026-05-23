@@ -1,6 +1,7 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include "OrderBook.hpp"
 
 class debugAccumulator{
 
@@ -10,12 +11,16 @@ class debugAccumulator{
         long counter;
 
     public:
-        void consume(long a){
+        void consume([[maybe_unused]] OuchEnterOrder& a){
+            //max = std::max(max, a.id);
+            //min = std::min(min, a.id);
+            ++counter;
+        }
+        void consume(long& a){
             max = std::max(max, a);
             min = std::min(min, a);
             ++counter;
         }
-
         int getCounter(){
             return counter;
         }
