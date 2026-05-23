@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cstddef>
+#include <string>
 #include <cstring>
 #include <string_view>
 #include <exception>
@@ -27,8 +28,15 @@
 
 OrderBook::OrderBook(){} // default construction of std::map and std::vector is good!
 
-long long OrderBook::checkValid(){
-    return std::accumulate(firmHoldings.begin(), firmHoldings.end(), 0, [](long long sum, auto& a){
+long long OrderBook::checkSharesValid(){
+    return std::accumulate(firmShares.begin(), firmShares.end(), 0, [](long long sum, auto& a){
+        return sum + a.second;
+
+    });
+}
+
+long long OrderBook::checkFlowValid(){
+    return std::accumulate(firmFlows.begin(), firmFlows.end(), 0, [](long long sum, auto& a){
         return sum + a.second;
 
     });
@@ -51,19 +59,24 @@ void OrderBook::updateMaxMin(int price, int side){
     
 }
 
-void OrderBook::doTrade(OuchEnterOrder& buyOrder, OuchEnterOrder& sellOrder){
-    if (buyOrder.shares >= sellOrder.shares){
-        buyOrder.shares -= sellOrder.shares;
+void OrderBook::doTrade(OuchOrderWrapper& buyOrder, OuchOrderWrapper& sellOrder){
+    long price{buyOrder.id >= sellOrder.id ? buyOrder.e.price : sellOrder.e.price};
+    if (buyOrder.e.shares >= sellOrder.e.shares){
+        buyOrder.e.shares -= sellOrder.e.shares;
         //profit += sellOrder.shares * (buyOrder.price - static_cast<long>(sellOrder.price));
-        firmHoldings[std::string_view(sellOrder.firm, 4)] += sellOrder.shares * static_cast<long>(buyOrder.price); // need to change to resting price!
-        firmHoldings[std::string_view(buyOrder.firm, 4)] -= sellOrder.shares * static_cast<long>(buyOrder.price); 
-        sellOrder.shares = 0;
+        firmFlows[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares * price; // need to change to resting price!
+        firmFlows[std::string(buyOrder.e.firm, 4)] -= sellOrder.e.shares * price; 
+        firmShares[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares; // need to change to resting price!
+        firmShares[std::string(buyOrder.e.firm, 4)] -= sellOrder.e.shares; 
+        sellOrder.e.shares = 0;
     } else{
-        sellOrder.shares -= buyOrder.shares;
+        sellOrder.e.shares -= buyOrder.e.shares;
         //profit += buyOrder.shares * (buyOrder.price - static_cast<long>(sellOrder.price));
-        firmHoldings[std::string_view(sellOrder.firm, 4)] += buyOrder.shares * static_cast<long>(buyOrder.price);
-        firmHoldings[std::string_view(buyOrder.firm, 4)] -= buyOrder.shares * static_cast<long>(buyOrder.price);
-        buyOrder.shares = 0;
+        firmFlows[std::string(sellOrder.e.firm, 4)] += buyOrder.e.shares * price;
+        firmFlows[std::string(buyOrder.e.firm, 4)] -= buyOrder.e.shares * price;
+        firmShares[std::string(sellOrder.e.firm, 4)] += buyOrder.e.shares;
+        firmShares[std::string(buyOrder.e.firm, 4)] -= buyOrder.e.shares;
+        buyOrder.e.shares = 0;
     }
 }
 
@@ -74,8 +87,8 @@ void OrderBook::consume(const OuchEnterOrder& order) {
         case 'O':
         {
             updateMaxMin(order.price, order.side);
-            book[convertPriceToIndex(order.price)].push_back(order);
-            std::string_view token_view(book[convertPriceToIndex(order.price)].back().token, OrderBookConstants::tokenLength);
+            book[convertPriceToIndex(order.price)].emplace_back(order, counter);
+            std::string token_view(book[convertPriceToIndex(order.price)].back().e.token, OrderBookConstants::tokenLength);
             tokenMap[token_view] = &book[convertPriceToIndex(order.price)].back();
             break;
         }
@@ -87,22 +100,22 @@ void OrderBook::consume(const OuchEnterOrder& order) {
             auto it = tokenMap.find(replaceOrder.existing_token);
             if (it != tokenMap.end()){ 
 
-                if(it->second->type == 'X') {return;} // if cancelled, we don't need to replace!
+                if(it->second->e.type == 'X') {return;} // if cancelled, we don't need to replace!
 
                 // create new order *updated*
-                updateMaxMin(replaceOrder.price, it->second->side);
+                updateMaxMin(replaceOrder.price, it->second->e.side);
 
                 // we are copying over the original order and then changing the fields which is dumb. Original is modified but it is cancelled anyway
-                it->second->shares = replaceOrder.shares;
-                it->second->price = replaceOrder.price;
+                it->second->e.shares = replaceOrder.shares;
+                it->second->e.price = replaceOrder.price;
                 // preserve the token for when cancelled.
-                book[convertPriceToIndex(replaceOrder.price)].push_back(*it->second); 
-                strncpy(book[convertPriceToIndex(replaceOrder.price)].back().token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
-                std::string_view token_view(book[convertPriceToIndex(replaceOrder.price)].back().token, OrderBookConstants::tokenLength);
+                book[convertPriceToIndex(replaceOrder.price)].emplace_back((*it->second).e, counter); 
+                strncpy(book[convertPriceToIndex(replaceOrder.price)].back().e.token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
+                std::string token_view(book[convertPriceToIndex(replaceOrder.price)].back().e.token, OrderBookConstants::tokenLength);
                 tokenMap[token_view] = &book[convertPriceToIndex(replaceOrder.price)].back();
                 
                 // cancel the original
-                it->second->type = 'X';
+                it->second->e.type = 'X';
             }
             // if order didn't exist, we do nothing
             break;
@@ -113,7 +126,7 @@ void OrderBook::consume(const OuchEnterOrder& order) {
             auto it = tokenMap.find(cancelOrder.token);
             if (it != tokenMap.end()){ // if real
 
-                it->second->type = 'X'; // cancel
+                it->second->e.type = 'X'; // cancel
             }
             // Technically we should update continusouly before we cancel, but that is up to details, and.... its easier to write the boring code for this version
             break;
@@ -159,8 +172,8 @@ void OrderBook::consume(const OuchEnterOrder& order) {
         // actually, we need to renew the order whenever it is cancelled or has zero quantity.or isn't on the side we are getting!
         // what this means is that 
 
-        std::list<OuchEnterOrder>& buyList =  book[convertPriceToIndex(currentMaxBuyPrice)];// this is the index of the order at that price, not the index of the price in the book
-        std::list<OuchEnterOrder>& sellList = book[convertPriceToIndex(currentMinSellPrice)];
+        std::list<OuchOrderWrapper>& buyList =  book[convertPriceToIndex(currentMaxBuyPrice)];// this is the index of the order at that price, not the index of the price in the book
+        std::list<OuchOrderWrapper>& sellList = book[convertPriceToIndex(currentMinSellPrice)];
 
         if (buyList.empty()){
             --currentMaxBuyPrice;
@@ -172,14 +185,14 @@ void OrderBook::consume(const OuchEnterOrder& order) {
         }
 
         // get to max buy side 
-        while (!buyList.empty() && (buyList.front().type == 'X' || buyList.front().side != 'B' || buyList.front().shares == 0)){
-            tokenMap.erase(buyList.front().token);
+        while (!buyList.empty() && (buyList.front().e.type == 'X' || buyList.front().e.side != 'B' || buyList.front().e.shares == 0)){
+            tokenMap.erase(buyList.front().e.token);
             buyList.pop_front();
         }
 
         // minimum sell side 
-        while (!sellList.empty() && (sellList.front().type == 'X' || sellList.front().side != 'S' || sellList.front().shares == 0)){
-            tokenMap.erase(sellList.front().token);
+        while (!sellList.empty() && (sellList.front().e.type == 'X' || sellList.front().e.side != 'S' || sellList.front().e.shares == 0)){
+            tokenMap.erase(sellList.front().e.token);
             sellList.pop_front();
         }
 

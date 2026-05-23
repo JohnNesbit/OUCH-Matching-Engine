@@ -1,6 +1,7 @@
 #include <string>
 #include <iostream>
 #include <thread>
+#include <string_view>
 #include "SPSC/queue.hpp"
 #include "SPSC/Producer.hpp"
 #include "SPSC/Consumer.hpp"
@@ -58,21 +59,40 @@ int main(int argc, char* argv[]){
     exchangeThread.join();
 
 
-    std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkValid() + accumulator.getProfit() << std::endl;
+    std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkFlowValid() << " and " << accumulator.checkSharesValid() << std::endl;
     std::cout << "Total trades processed: " << accumulator.getCounter() << std::endl;
-    std::cout << "Total Profit: " << accumulator.getProfit()/10000 << std::endl;
+    //std::cout << "Total Profit: " << accumulator.getProfit()/10000 << std::endl;
 
     auto book = accumulator.getBook();
     int numOrders;
     for(int i{}; i < OrderBookConstants::PriceRange; ++i){
         numOrders += book[i].size();
         for (auto p : book[i]){
-            std::cout << "Type: " << p.type << " Side: " << p.side << " Price: " << p.price << std::endl;
+            std::cout << "Type: " << p.e.type << " Side: " << p.e.side << " Price: " << p.e.price << " Id: " << p.id << std::endl;
         }
-        
+    }
+    
+    std::unordered_map<std::string, long long>& flows = accumulator.getFirmFlows();
+    std::unordered_map<std::string, long long>& shares = accumulator.getFirmShares();
+    // get volume, largest, and price of share paid by largest
+    long long volume{};
+    long long mostShares{};
+    long long priceOfMostShares{};
+    
+    for(auto it{shares.begin()}; it != shares.end(); ++it){
+        volume += std::abs(it->second);
+        if (it->second > mostShares){
+            mostShares = it->second;
+            std::cout << it->first << " should equal ";
+            std::string_view a{it->first.substr(0, 4)};
+            std::cout << a  << std::endl;
+            priceOfMostShares = std::abs(flows[it->first]);
+        }
     }
 
+    std::cout << "Total Firms: " << shares.size() << " Total share volume: " << volume << " Firm with most shares paid on average: " << priceOfMostShares/mostShares << std::endl;
     std::cout << "Total Orders Active: " << numOrders << std::endl;
+
     /*
     int misses = accumulator.getMisses();
 

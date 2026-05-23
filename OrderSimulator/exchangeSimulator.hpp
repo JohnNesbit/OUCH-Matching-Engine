@@ -129,6 +129,6 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
                     int flags);
 
         */
-        sendmmsg(sockfd, msgs.get(), batchSize, MSG_ZEROCOPY);
+        sendmmsg(sockfd, msgs.get(), batchSize, 0);
     }
 }
