@@ -58,7 +58,7 @@ int main(int argc, char* argv[]){
     exchangeThread.join();
 
 
-    std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkValid() - accumulator.getProfit() << std::endl;
+    std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkValid() + accumulator.getProfit() << std::endl;
     std::cout << "Total trades processed: " << accumulator.getCounter() << std::endl;
     std::cout << "Total Profit: " << accumulator.getProfit()/10000 << std::endl;
 
@@ -66,6 +66,10 @@ int main(int argc, char* argv[]){
     int numOrders;
     for(int i{}; i < OrderBookConstants::PriceRange; ++i){
         numOrders += book[i].size();
+        for (auto p : book[i]){
+            std::cout << "Type: " << p.type << " Side: " << p.side << " Price: " << p.price << std::endl;
+        }
+        
     }
 
     std::cout << "Total Orders Active: " << numOrders << std::endl;

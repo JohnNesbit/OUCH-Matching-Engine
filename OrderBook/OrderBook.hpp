@@ -54,9 +54,14 @@ class OrderBook {
         void doTrade(OuchEnterOrder& buyOrder, OuchEnterOrder& sellOrder);
         std::ptrdiff_t convertPriceToIndex(int);
         int checkValid();
-        int getProfit(){return profit;}
-        int getCounter(){return OrderBook::counter;}
+        long long getProfit(){return profit;}
+        long getCounter(){return OrderBook::counter;}
         std::list<OuchEnterOrder>* getBook(){return book;};
+
+        ~OrderBook(){
+            
+
+        }
 
 
     private:
@@ -68,7 +73,6 @@ class OrderBook {
         // no, these are only 1,500,000 at most, fine to static cast later.
         int currentMinSellPrice{std::numeric_limits<int>::max()};
         int currentMaxBuyPrice{};
-
 
         // std::vector is the incorrect took here. we need fast tail and head accesses, but don't care about random access
         // we need dynamic memory allocation
@@ -86,6 +90,7 @@ class OrderBook {
         long long profit{};
 
         // O(1) cancellation and replacement access
+        // could use std:ref here, but unorderded maps dont delete on erasure so this is fine as long as we remove from here when ever we pop()
         std::unordered_map<std::string_view, OuchEnterOrder*> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
         // lower hot-path overhead for the consumer threads!
 

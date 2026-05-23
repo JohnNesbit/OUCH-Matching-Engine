@@ -2,6 +2,7 @@
 #include <numeric>
 #include <cstddef>
 #include <cstring>
+#include <exception>
 #include "OrderSimulator/OUCH.hpp"
 #include "OrderBook.hpp"
 
@@ -33,13 +34,17 @@ int OrderBook::checkValid(){
 }
 
 inline std::ptrdiff_t OrderBook::convertPriceToIndex(int price){
-    return price - OrderBookConstants::openingCrossPrice + OrderBookConstants::PriceRange/2;
+    int p = price - OrderBookConstants::openingCrossPrice + OrderBookConstants::PriceRange/2;
+    if (p > 0 && p < OrderBookConstants::PriceRange) return p;
+    else{
+        throw std::exception();
+    }
 }
 
 void OrderBook::updateMaxMin(int price, int side){
     if(side == 'S'){
         if (std::min(price, currentMinSellPrice) == price) currentMinSellPrice = price;
-    } else{
+    } else if(side == 'B'){
         if (std::max(price, currentMaxBuyPrice) == price) currentMaxBuyPrice = price; // should we let this speculatively execute on this control dependency of daemon?
     }
     
@@ -48,14 +53,16 @@ void OrderBook::updateMaxMin(int price, int side){
 void OrderBook::doTrade(OuchEnterOrder& buyOrder, OuchEnterOrder& sellOrder){
     if (buyOrder.shares >= sellOrder.shares){
         buyOrder.shares -= sellOrder.shares;
-        profit += sellOrder.shares * (sellOrder.price - buyOrder.price);
+        profit += sellOrder.shares * (buyOrder.price - sellOrder.price);
         firmHoldings[sellOrder.firm] += sellOrder.shares * sellOrder.price;
         firmHoldings[buyOrder.firm] -= sellOrder.shares * buyOrder.price; // scam 'em
+        sellOrder.shares = 0;
     } else{
         sellOrder.shares -= buyOrder.shares;
-        profit += buyOrder.shares * (sellOrder.price - buyOrder.price);
+        profit += buyOrder.shares * (buyOrder.price - sellOrder.price);
         firmHoldings[sellOrder.firm] += buyOrder.shares * sellOrder.price;
         firmHoldings[buyOrder.firm] -= buyOrder.shares * buyOrder.price;
+        buyOrder.shares = 0;
     }
 }
 
@@ -64,10 +71,13 @@ void OrderBook::consume(const OuchEnterOrder& order) {
     ++OrderBook::counter;
     switch (order.type){
         case 'O':
+        {
             updateMaxMin(order.price, order.side);
             book[convertPriceToIndex(order.price)].push_back(order);
-            tokenMap[order.token] = &book[convertPriceToIndex(order.price)].back();
+            std::string_view token_view(book[convertPriceToIndex(order.price)].back().token, OrderBookConstants::tokenLength);
+            tokenMap[token_view] = &book[convertPriceToIndex(order.price)].back();
             break;
+        }
         case 'U':
         {
             const OuchReplaceOrder& replaceOrder = reinterpret_cast<const OuchReplaceOrder&>(order);
@@ -84,9 +94,11 @@ void OrderBook::consume(const OuchEnterOrder& order) {
                 // we are copying over the original order and then changing the fields which is dumb. Original is modified but it is cancelled anyway
                 it->second->shares = replaceOrder.shares;
                 it->second->price = replaceOrder.price;
-                strncpy(it->second->token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
+                // preserve the token for when cancelled.
                 book[convertPriceToIndex(replaceOrder.price)].push_back(*it->second); 
-                tokenMap[replaceOrder.replacement_token] = &book[convertPriceToIndex(replaceOrder.price)].back();
+                strncpy(book[convertPriceToIndex(replaceOrder.price)].back().token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
+                std::string_view token_view(book[convertPriceToIndex(replaceOrder.price)].back().token, OrderBookConstants::tokenLength);
+                tokenMap[token_view] = &book[convertPriceToIndex(replaceOrder.price)].back();
                 
                 // cancel the original
                 it->second->type = 'X';
@@ -99,6 +111,7 @@ void OrderBook::consume(const OuchEnterOrder& order) {
             const OuchCancelOrder& cancelOrder = reinterpret_cast<const OuchCancelOrder&>(order);
             auto it = tokenMap.find(cancelOrder.token);
             if (it != tokenMap.end()){ // if real
+
                 it->second->type = 'X'; // cancel
             }
             // Technically we should update continusouly before we cancel, but that is up to details, and.... its easier to write the boring code for this version
@@ -164,7 +177,7 @@ void OrderBook::consume(const OuchEnterOrder& order) {
         }
 
         // minimum sell side 
-        while (!sellList.empty() && (sellList.front().type == 'X' || sellList.front().side != 'B' || sellList.front().shares == 0)){
+        while (!sellList.empty() && (sellList.front().type == 'X' || sellList.front().side != 'S' || sellList.front().shares == 0)){
             tokenMap.erase(sellList.front().token);
             sellList.pop_front();
         }
