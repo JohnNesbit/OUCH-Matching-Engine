@@ -20,7 +20,7 @@
 
 
 // structure: should probably have a "SPSC queue" class which owns the buffer, producer and consumer should not own the buffer
-// that structure makes the atomics
+// that structure makes the atomics and owns
 
 Producer::Producer (int port, int bufferSize)
                          : port{port}, bufferSize{bufferSize} {

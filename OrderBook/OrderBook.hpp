@@ -8,26 +8,11 @@
 #include <unordered_map>
 #include "OrderSimulator/OUCH.hpp"
 
-// we build this object to assume multiple threads are going to be calling member functions at the same time
-// this will contain both some bookkeeping daemon for executing orders
-// need O(1) for cancellation and replacing, maybe a hashmap? Test B-tree because of cache locality!
-
-// consume function will be a small part, executed by the consumer while another thread takes care of actual bookkeeping
-// basically consume needs to be as inexpensive as possible!
-
-// So.. priorities:
-// Consume should be O(1) or O(log n) on orderbook size
-
-// only simulating one ticker, multiple would just be adding one access to a map between ticker and its orderbook object
-
-// actual order list should be sorted on price, since only 4 decimal places, just index directly into array based on price. In reality would need to do multi-level access(probably one indirection?)
-// in this, only 4096 possibilities for price so we just allocate an array, store all of the orders 
-
 // IMPORTANT: THIS OBJECT IS NOT ZERO-COPY, DUE TO ASSUMING THAT THE CALLING CONSUMER CANNOT STD::MOVE ITS OBJECTS DUE TO NO ALLOCATIONS IN HOT PATH, THE CONSUMER PUTS ALLOCATIONS
 // ONTO THE CONSUMER DAEMON
 // CONSUMER DAEMON WILL CHECK WITHIN A THRESHOLD OF EXPANSION AND PRE-RESERVE SPACE IN STD::VECTORS TO AVOID ALLOCATIONS WITHIN HOT PATH
 
-// actualyl screw this, critical section is so large that it only makes sense to spawn off the actual update/cancel and firm holdings hashmap accesses
+// critical section is so large that it only makes sense to spawn off the actual update/cancel and firm holdings hashmap accesses
 // easiest way to do this is copying into a ring buffer with a fullfillment daemon
 // this is roughly one cache access?
 
@@ -36,7 +21,7 @@
 
 namespace OrderBookConstants
 {
-    constexpr int PriceRange = 8196;
+    constexpr int PriceRange = 4096;
     constexpr int openingCrossPrice = 1500000; // four decimals
     constexpr int tokenLength = 14;
 }
@@ -88,9 +73,8 @@ class OrderBook {
         // need to mantain atomics for orderbook so we don't get weird stuff
         // taring IS a concern because our struct is larger than the cache line size :(
         // less than cache line size
-        // 4096 on each side so 8192
+        // 4096 size
 
-        // only accessed by daemon but O(1)
         // string view to char[4]
         std::unordered_map<std::string, long long> firmShares; // hold shares in each company
         std::unordered_map<std::string, long long> firmFlows; // hold how much owed/owe

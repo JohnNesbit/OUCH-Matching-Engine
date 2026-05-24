@@ -9,17 +9,6 @@
 #include "OrderBook.hpp"
 
 
-// what happens if we need to update price?
-// genuinely cant oof
-
-// could restructure tbh
-// genuniely just insert replaces as if they were actual orders
-// we then just cancel the old order?
-
-// implemetation detail
-
-// THE FOLLOWING IS A DISCUSSION OF PERFORMANCE, HOWEVER, IT WAS DISCARDED DUE TO EASE OF IMPLEMENTATION AND THE RELATIVE SPEED OF I/O
-
 // if we wanted to make this truly zero copy, I could imagine continually shifting the ring buffer pointer the SPSC uses
 // the allocated ring buffer is then just pointed to in the order book, meaning we do zero copies of the actual information within user space!
 // if kernel-bypassed and DMAed in, we would get true zero-copy from the network
@@ -50,7 +39,7 @@ void OrderBook::updateMaxMin(int price, int side){
     if(side == 'S'){
         if (std::min(price, currentMinSellPrice) == price) currentMinSellPrice = price;
     } else if(side == 'B'){
-        if (std::max(price, currentMaxBuyPrice) == price) currentMaxBuyPrice = price; // should we let this speculatively execute on this control dependency of daemon?
+        if (std::max(price, currentMaxBuyPrice) == price) currentMaxBuyPrice = price;
     }
     
 }
@@ -59,15 +48,13 @@ void OrderBook::doTrade(OuchOrderWrapper& buyOrder, OuchOrderWrapper& sellOrder)
     long price{buyOrder.id >= sellOrder.id ? buyOrder.e.price : sellOrder.e.price};
     if (buyOrder.e.shares >= sellOrder.e.shares){
         buyOrder.e.shares -= sellOrder.e.shares;
-        //profit += sellOrder.shares * (buyOrder.price - static_cast<long>(sellOrder.price));
-        firmFlows[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares * price; // need to change to resting price!
+        firmFlows[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares * price;
         firmFlows[std::string(buyOrder.e.firm, 4)] -= sellOrder.e.shares * price; 
-        firmShares[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares; // need to change to resting price!
+        firmShares[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares;
         firmShares[std::string(buyOrder.e.firm, 4)] -= sellOrder.e.shares; 
         sellOrder.e.shares = 0;
     } else{
         sellOrder.e.shares -= buyOrder.e.shares;
-        //profit += buyOrder.shares * (buyOrder.price - static_cast<long>(sellOrder.price));
         firmFlows[std::string(sellOrder.e.firm, 4)] += buyOrder.e.shares * price;
         firmFlows[std::string(buyOrder.e.firm, 4)] -= buyOrder.e.shares * price;
         firmShares[std::string(sellOrder.e.firm, 4)] += buyOrder.e.shares;
@@ -84,9 +71,10 @@ void OrderBook::consume(const OuchEnterOrder& order) {
         case 'O':
         {
             updateMaxMin(order.price, order.side);
-            book[convertPriceToIndex(order.price)].emplace_back(order, counter);
-            std::string token_view(book[convertPriceToIndex(order.price)].back().e.token, OrderBookConstants::tokenLength);
-            tokenMap[token_view] = &book[convertPriceToIndex(order.price)].back();
+            auto& priceList{book[convertPriceToIndex(order.price)]}; // get the list for orders on this price
+            priceList.emplace_back(order, counter);
+            std::string token_view(priceList.back().e.token, OrderBookConstants::tokenLength);
+            tokenMap[token_view] = &priceList.back();
             break;
         }
         case 'U':
@@ -96,20 +84,26 @@ void OrderBook::consume(const OuchEnterOrder& order) {
             // check that this order to update actually exists
             auto it = tokenMap.find(replaceOrder.existing_token);
             if (it != tokenMap.end()){ 
-
-                if(it->second->e.type == 'X') {return;} // if cancelled, we don't need to replace!
+                OuchEnterOrder& originalOrder{it->second->e};
+                if(originalOrder.type == 'X') {return;} // if cancelled, we don't need to replace!
 
                 // create new order *updated*
-                updateMaxMin(replaceOrder.price, it->second->e.side);
+                updateMaxMin(replaceOrder.price, originalOrder.side);
 
                 // we are copying over the original order and then changing the fields which is dumb. Original is modified but it is cancelled anyway
-                it->second->e.shares = replaceOrder.shares;
-                it->second->e.price = replaceOrder.price;
-                // preserve the token for when cancelled.
-                book[convertPriceToIndex(replaceOrder.price)].emplace_back((*it->second).e, counter); 
-                strncpy(book[convertPriceToIndex(replaceOrder.price)].back().e.token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
-                std::string token_view(book[convertPriceToIndex(replaceOrder.price)].back().e.token, OrderBookConstants::tokenLength);
-                tokenMap[token_view] = &book[convertPriceToIndex(replaceOrder.price)].back();
+                originalOrder.shares = replaceOrder.shares;
+                originalOrder.price = replaceOrder.price;
+
+                // copy over the modified original
+                auto& priceListForReplace{book[convertPriceToIndex(replaceOrder.price)]};
+                priceListForReplace.emplace_back(originalOrder, counter); 
+
+                // then copy the token in-place to preserve the original's token for cancellation
+                strncpy(priceListForReplace.back().e.token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
+
+                //update the tokenMap
+                std::string token_view(priceListForReplace.back().e.token, OrderBookConstants::tokenLength);
+                tokenMap[token_view] = &priceListForReplace.back();
                 
                 // cancel the original
                 it->second->e.type = 'X';
@@ -135,36 +129,6 @@ void OrderBook::consume(const OuchEnterOrder& order) {
     // just two-pointer up from min sell price and down from max buy price until the book is no longer crossed!
 
     while(currentMaxBuyPrice >= currentMinSellPrice){
-        
-        // OLD COMMENTS
-        // we need to zero out the cancelationUpdateMap entries as we find them
-        // we need to find the last update/cancel entry, then we need to hold this as our current trading object
-        // we loop on sell side until this is fullfilled and check again
-        // sell side also should have its object persist until it needs to regenerate
-
-        // lets split this massive horrible thing into some functions
-
-        //updateOrCancelOrder() - handels the updating logic and returns void, it will put the correct values into the order object in-place
-        // because we are single threaded, we don't need to worry about shifting references withing std::vector so we can act like its actual memory that we own
-        // overhead... is what it is... this allows us to pickup where we left off and be correct
-        // both buy and sell side can easily use this function
-
-        // getOrder() - this function gets the next order up for sell/buy side once the last one was exhausted?
-        // maybe this is literally just the updateOrCancelOrder() function since we are updating the index and the price here manually!
-        // okay so make this just updateOrCancelOrder. If it is cancelled, we should genuinely just return a std::optional<> with error flag?
-        // actually... we are updating this in-place so we don't need ot have indecies at all! Just check list emptiness and call getOrder()
-        // can just do -1 if fails!
-
-        // so, our structure is basically loop on book being crossed, within that, loop on the order of orders within the buy/sell queue
-
-        // we get our buy order - if we have an unfilled order from before, keep it. Do this via just updating the quantity inplace in the vector!
-        // we get our sell order
-        // do as many trades as possible on each - doTrade() with references
-        // failure mode is that one is empty, let loop continue to reset
-        // do Trade needs to adjust the buyList and sellList quantity fields, on the zeroed one, it should pop the value
-
-        // getOrder only fails if the current list is empty, if so, we should iterate to the next one!
-        // END OLD COMMENTS
         
         // actually, we need to renew the order whenever it is cancelled or has zero quantity.or isn't on the side we are getting!
         // what this means is that 

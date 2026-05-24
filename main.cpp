@@ -29,7 +29,7 @@ int main(int argc, char* argv[]){
     int time{1000}; // one second experiment
     constexpr int experimentLoops{10};
     bool experimentFlag{false};
-    int port{8080}, bufferSize{128}, sendSize{128};
+    int port{8080}, bufferSize{128}, sendSize{128}; // changing the producer batch size requires changing queue.hpp constants
     switch (argc) { // intentionally fallthrough here
         case 5:
             experimentFlag = static_cast<bool>(std::atoi(argv[4]));
@@ -113,7 +113,6 @@ int main(int argc, char* argv[]){
 #ifndef DEBUGSIM
     std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkFlowValid() << " and " << accumulator.checkSharesValid() << std::endl;
     std::cout << "Total trades processed: " << accumulator.getCounter() << std::endl;
-    //std::cout << "Total Profit: " << accumulator.getProfit()/10000 << std::endl;
 
     auto book = accumulator.getBook();
     int numOrders{};
@@ -126,6 +125,7 @@ int main(int argc, char* argv[]){
     
     std::unordered_map<std::string, long long>& flows = accumulator.getFirmFlows();
     std::unordered_map<std::string, long long>& shares = accumulator.getFirmShares();
+
     // get volume, largest, and price of share paid by largest
     long long volume{};
     long long mostShares{};
@@ -147,21 +147,13 @@ int main(int argc, char* argv[]){
 #endif
 #ifdef DEBUGSIM
     
-    //int misses = accumulator.getMisses() - 128;
+    int misses = accumulator.getMisses() - 128;
 
     std::cout << "Ended Exchange\n";
-    //std::cout << "Total misses: " << misses;
-    //std::cout << "\nMiss rate: " << misses/static_cast<float>(accumulator.getLength());
+    std::cout << "Total misses: " << misses;
+    std::cout << "\nMiss rate: " << misses/static_cast<float>(accumulator.getLength());
     std::cout << "\nTotal tranferred: " << accumulator.getLength() << std::endl;
     //std::cout << "We sent: " << generator.getCount() << std::endl;
 #endif
-
-    // we can sleep this thread until console input by sleeping it via "poll" on the console input fd
-    // can have an exit within producer and consumer loops, the producer/consumers exit when that value changes
-    // just a reference we pass?
-
-    //std::cout << "Enter any key to stop: "
-    //while (!std::cin.peek()){} // while user hasnt hit anything
-
     return 0;
 }

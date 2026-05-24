@@ -7,47 +7,6 @@
 
 
 class Producer {
-    /*
-    what do we need? 
-    this will run on its own thread, so we can probably have it just poll the network device directly?
-    how can we do this without insane context switching?
-
-    basically,
-    networking + OS stuff
-
-    lets think about how we are dealing with this buffer
-    so we are getting messages in batches with these structs of header + how many bytes
-    passing in this array of structs as well to get!
-    can fine tune the max number of messages we can pull in one syscall then!
-
-    worse than io_uring for sure, but we will see how this one is!
-
-    the nice thing is that the OS will directly copy the message data into the buffers that we give it!
-        so... lowkey only copies are from the NIC to the socket and the socket to the ring buffer!
-        then from buffer to socket to nic for outgoing
-        so two + two = four total round trip copies
-        this is not great, but the best we can do if we arent manipulating where the kernel would have the NIC copy it to
-
-    so, how do we want to design this?
-    I think the easiest way is to basically have some ring buffer that we allocate and then...
-    we can find the size of the msgStruct and iterate across the pointer locations to update in O(batch)
-
-    so basically we grab in batches so we avoid the syscall, but we still have to provide the thing manually for the thing
-    how can we do this better?
-    could Alignas and parallelize
-    for now single-thread this
-    kinda cooked tho
-
-    pass to consumer!
-
-    consumer does:
-    parsing
-    computation! - setup basic multithreaded computation :)
-    edits the order book!
-    
-    Resource allocation is initialization makes sense here roughly, we just do shared ptr between producer and consumer?
-        - ensure that we have destructor(make struct just for that or something if we need alignment), etc if any of the elements in the ring buffer have pointers need to destruct seperately with delete[] as well!
-    */
 
     public:
         Producer (int port, int bufferSize);
@@ -81,18 +40,6 @@ class Producer {
 
 inline int Producer::maxPull(int t, int h){ // probably fine to inline
     return (h - t - 1 + bufferSize) % bufferSize;
-    /*
-    // both consumer and producer can only get up to 1 cell before the head/tail. We initialize at 0 because producer is first and have special case there.
-    if (h > t){
-        return (h - t) - 1;
-    }
-    if (h < t){ // awful because this means we genuinely eat the tail :/
-        return ((bufferSize - t) + (h - 1))  % bufferSize;
-    }
-    if(t == 0 && h == 0){
-        return bufferSize-1;
-    }
-    return -1; //error condition! They should never overlap nonzero*/
 }
 
 template <class T>
@@ -101,11 +48,9 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
     
     // recvmmsg
     // allows for pulling of whole queue maybe so less 50-100ns mode switches
-
-    
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(6, &cpuset); // Bind to core 7
+    CPU_SET(7, &cpuset); // Bind to core 7
     pthread_t current_thread = pthread_self();
     pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset); 
     
@@ -115,7 +60,7 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
     int tail = q.bufferTailIndex.load(std::memory_order_relaxed);
     long producerRecieved{};
     int i{};
-    while(!terminateFlag.load(std::memory_order_relaxed)){ // can use volatile here for intel bc of ordering guarentees I think, but complies to same thing 
+    while(!terminateFlag.load(std::memory_order_relaxed)){ // can use volatile here for intel bc of ordering guarentees; complies to same thing 
         i = 0; // maxPull calcs the number of cells left between tail and head so tail does not eat head!
 
         // how do we actually need the compiler to order these accesses?
@@ -134,9 +79,6 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
             producerRecieved += retval;
             tail = (retval + tail) % q.bufferSize;
             q.bufferTailIndex.store(tail, std::memory_order_release);  // don't want to fill in the buffer after telling the conusmer we have, release adds a fence here so we dont
-        }else {
-            std::cout << errno << std::endl;
-            throw std::runtime_error("Failed to retrieve messages from kernel");
         }
         
     }
