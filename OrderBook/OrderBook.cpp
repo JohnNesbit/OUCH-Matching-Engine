@@ -48,7 +48,7 @@ void OrderBook::doTrade(OuchOrderWrapper& buyOrder, OuchOrderWrapper& sellOrder)
     long price{buyOrder.id >= sellOrder.id ? buyOrder.e.price : sellOrder.e.price};
     if (buyOrder.e.shares >= sellOrder.e.shares){
         buyOrder.e.shares -= sellOrder.e.shares;
-        firmFlows[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares * price;
+        firmFlows[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares * price; // should definitely make these std::uint32 but we take almost no perf hit from this right now.
         firmFlows[std::string(buyOrder.e.firm, 4)] -= sellOrder.e.shares * price; 
         firmShares[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares;
         firmShares[std::string(buyOrder.e.firm, 4)] -= sellOrder.e.shares; 
