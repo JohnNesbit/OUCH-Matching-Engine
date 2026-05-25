@@ -59,27 +59,29 @@ int main(int argc, char* argv[]){
         for (int i{1}; i < experimentLoops; ++i){
             // initalize orderbook for this run
             accumulatorType accumulator{};
+            terminateFlag.store(true, std::memory_order_release);
 
             // start simulation
             std::thread exchangeThread([&simulator, &terminateFlag, &exchangeQueue, &generator](){
                 simulator.run<generatorType>(terminateFlag, exchangeQueue.getAddr(), generator);
             });
 
+            // diff in sent and recv could be real or just this gap, try to test via looking at what the diff approaches
+            // as this spot approaches 0% of the time spent in the loop
 
             // run producer and consumer
             exchangeQueue.run<accumulatorType>(sendSize, accumulator, time*i);
 
             // end simulation
-            terminateFlag.store(true, std::memory_order_release);
-            exchangeThread.join();
             terminateFlag.store(false, std::memory_order_release);
+            exchangeThread.join();
 
             // print data
             accumulatedCount[i] = accumulator.getCounter();
             std::cout << "With " << i << " seconds: " << accumulatedCount[i] << " trades" << std::endl;
             std::cout << "Trades sent so far: " << simulator.getCounter() << std::endl;
             
-            simulator.clearCounter();
+            simulator.clearCounter(); // clear simulator sent queue
             exchangeQueue.resetObject(); // just clears queue via changing pointers :)
             
         }

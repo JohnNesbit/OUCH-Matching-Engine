@@ -114,7 +114,7 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
     
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(5, &cpuset); // Bind to core 7
+    CPU_SET(1, &cpuset); // Bind to core 1(no hyperthreads)
     pthread_t current_thread = pthread_self();
     pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset); // bind to core 7! Should not be interrupted, need this to be our "clock" of sorts
     

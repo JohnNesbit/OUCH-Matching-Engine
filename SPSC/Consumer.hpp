@@ -34,8 +34,6 @@ void ConsumeQueue(std::atomic<bool>& terminateFlag, int batchSize, queue<T>& q, 
             } 
             head = (head + fetch) % q.bufferSize;
             q.bufferHeadIndex.store(head, std::memory_order_release);
-        } else{
-
         }
     }
 }

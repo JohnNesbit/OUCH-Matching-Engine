@@ -50,7 +50,7 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
     // allows for pulling of whole queue maybe so less 50-100ns mode switches
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(7, &cpuset); // Bind to core 7
+    CPU_SET(2, &cpuset); // Bind to core 2(no hyperthreads)
     pthread_t current_thread = pthread_self();
     pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset); 
     
@@ -79,6 +79,8 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
             producerRecieved += retval;
             tail = (retval + tail) % q.bufferSize;
             q.bufferTailIndex.store(tail, std::memory_order_release);  // don't want to fill in the buffer after telling the conusmer we have, release adds a fence here so we dont
+        } else{
+            std::cout << retval << std::endl;
         }
         
     }
