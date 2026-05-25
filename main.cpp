@@ -125,8 +125,8 @@ int main(int argc, char* argv[]){
         }
     }
     
-    std::unordered_map<std::string, long long>& flows = accumulator.getFirmFlows();
-    std::unordered_map<std::string, long long>& shares = accumulator.getFirmShares();
+    std::unordered_map<std::uint32_t, long long>& flows = accumulator.getFirmFlows();
+    std::unordered_map<std::uint32_t, long long>& shares = accumulator.getFirmShares();
 
     // get volume, largest, and price of share paid by largest
     long long volume{};
@@ -138,7 +138,7 @@ int main(int argc, char* argv[]){
         if (it->second > mostShares){
             mostShares = it->second;
             std::cout << it->first << " should equal ";
-            std::string_view a{it->first.substr(0, 4)};
+            std::string a{reinterpret_cast<const char*>(&it->first)}; 
             std::cout << a  << std::endl;
             priceOfMostShares = std::abs(flows[it->first]);
         }

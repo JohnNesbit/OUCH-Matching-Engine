@@ -94,7 +94,7 @@ public:
             firm_str[0] = 'F';
             firm_str[1] = '0' + (i / 10);
             firm_str[2] = '0' + (i % 10);
-            firm_str[1] = '0';
+            firm_str[1] = '\0';
 
             // Pre-cast to uint32_t for faster assignment later
             std::memcpy(&firm_pool[i], firm_str, 4);

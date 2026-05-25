@@ -50,6 +50,23 @@ Well, also here we have to make a decision about how we want to think about this
 
 As you can see, our overhead from our network filtering hooks is gone now that we are on our private network namespaces! After this change, we get boosted to 360k/s with >99% packet reception rate on our producer. Despite this victory, we still see that 14%/35% of our sender is actually still doing the direct local_ip delivery and doing the ip_recv function itself within the softirq's. Really, we would like the irq's to get picked up by our allocated system cores rather than the ones we have running our sender. Our irq's are presumably being triggered by our tranmission queue since we see that queue_xmit function. Because this is not actually one process part of our send, we can set our irq affinity to 0 for that core to prevent this(and also all the other non-sys cores while we are at it).
 
+Well, looking into irqbalance people seem to think there is a good reason not to shift soft irqs anywhere.
+
+trying out non-blockign for our simulator somewhat unsprisingly changes neither the output nor even the perf graph. Because the sendmmsg stack is immediately putting a softirq onto this core and everything is tied to this core, the waking and sleeping overhead is actually the same since the nonblocking call still sleeps the sender until the message is written due to the softirq being scheduled ahead of it.
+
+Interestingly enough, however, at this point we seem to be bound on our consumer! Our producer is actually never waiting for messages and is instead busy waiting for about 1/3 of its time on the consumer!! Below we have a perf to show this:
+
+![](Images/consumerBoundPerf.png)
+
+Because of this, I figure it is about time to optimize the orderbook logic itself. 
+
+![]()
+
+huh.. weird, 1/3 of the time of the consumer is waiting on the producer and 2/3 of the time of the consumer is waiting on the producer. What this likely means is our consumer has some really heavy peaks which halt the consumer and then lap around quickly, making the producer wait on the consumer 1/3 of the time(it should be 0% ideally). Roughly 20% of the consumer's time is spent in the consume function.
+
+To prevent spiking, I re-structured the actual trade execution. Instead of storing all trades in an array of prices with a DLL of orders in each, I just am making a heap for buy and sell which allows for which comparisons at the top of each, making execution O(log n * k) where n is the size of the order book and k is the number of trades executed. This compares to the previous algortihm which was O(l) on l being the range of the spread of the orderbook.
+    - another approach would have been doing binary search across the spread to find the next highest sell/lowest buy as fast as possible.
+
 
 ## 2. Multiplexed Ports and Async IO
 

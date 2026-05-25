@@ -53,7 +53,7 @@ Producer::Producer (int port, int bufferSize)
     
     // Filling server information 
     addr.sin_family    = AF_INET; // IPv4 
-    addr.sin_addr.s_addr = htonl((10 << 24) + 3);//htonl((10 << 24) + 1); // 10.0.0.1 ((10 << 24) + 2); 
+    addr.sin_addr.s_addr = htonl((10 << 24) + 1);//htonl((10 << 24) + 1); // 10.0.0.1 ((10 << 24) + 2); 
     addr.sin_port = htons(port); 
 
     // Bind the socket with the server address 

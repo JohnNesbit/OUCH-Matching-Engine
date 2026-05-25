@@ -26,10 +26,57 @@ namespace OrderBookConstants
     constexpr int tokenLength = 14;
 }
 
+/*
+struct OuchEnterOrder {
+    char type;             
+    char token[14];
+    char side;             
+    uint32_t shares;
+    char stock[8];
+    uint32_t price;
+    uint32_t tif;
+    char firm[4];
+    char display;
+    char capacity;
+    char iso;
+    uint32_t min_qty;
+    char cross_type;
+};
+
+
+struct OuchOrderWrapper {
+    OuchOrderWrapper(OuchEnterOrder order): type{order.type}, side{order.side}, shares{shares}, price{price}, firm{char}{
+        memcpy(&token, order.token, 14);
+    }
+    char type;             
+    token token;
+    char side;             
+    uint32_t shares;
+    uint32_t price;
+    uint32_t firm;
+    long id;
+};
+*/
+
 struct OuchOrderWrapper {
     OuchEnterOrder e;
     long id;
 };
+
+struct token {
+    char token[14];
+};
+
+template<>
+struct std::hash<token> {
+    size_t operator()(const token& t) const {
+        return std::hash<std::string_view>{}({t.token, 14});
+    }
+};
+
+inline bool operator==(const token& a, const token& b) {
+    return std::memcmp(a.token, b.token, 14) == 0;
+}
 
 class OrderBook {
     public:
@@ -45,14 +92,11 @@ class OrderBook {
         std::ptrdiff_t convertPriceToIndex(int);
         long long checkFlowValid();
         long long checkSharesValid();
-        std::unordered_map<std::string, long long>& getFirmShares(){return firmShares;}
-        std::unordered_map<std::string, long long>& getFirmFlows(){return firmFlows;}
+        std::unordered_map<std::uint32_t, long long>& getFirmShares(){return firmShares;}
+        std::unordered_map<std::uint32_t, long long>& getFirmFlows(){return firmFlows;}
         long getCounter(){return OrderBook::counter;}
         std::list<OuchOrderWrapper>* getBook(){return book;};
-
         ~OrderBook(){
-            
-
         }
 
 
@@ -76,13 +120,13 @@ class OrderBook {
         // 4096 size
 
         // string view to char[4]
-        std::unordered_map<std::string, long long> firmShares; // hold shares in each company
-        std::unordered_map<std::string, long long> firmFlows; // hold how much owed/owe
+        std::unordered_map<std::uint32_t, long long> firmShares; // hold shares in each company
+        std::unordered_map<std::uint32_t, long long> firmFlows; // hold how much owed/owe
         // hold company inflow and outflow
 
         // O(1) cancellation and replacement access
         // could use std:ref here, but unorderded maps dont delete on erasure so this is fine as long as we remove from here when ever we pop()
-        std::unordered_map<std::string, OuchOrderWrapper*> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
+        std::unordered_map<token, OuchOrderWrapper*> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
         // lower hot-path overhead for the consumer threads!
 
         long counter{0};

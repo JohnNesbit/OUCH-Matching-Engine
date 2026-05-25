@@ -44,21 +44,29 @@ void OrderBook::updateMaxMin(int price, int side){
     
 }
 
+inline std::uint32_t firmNametoInt(char* firm){
+    return *reinterpret_cast<std::uint32_t*>(firm); // this function should get fully optimized out!
+}
+
+inline const token& charsToToken(const char* t){
+    return *reinterpret_cast<const token*>(t);
+}
+
 void OrderBook::doTrade(OuchOrderWrapper& buyOrder, OuchOrderWrapper& sellOrder){
     long price{buyOrder.id >= sellOrder.id ? buyOrder.e.price : sellOrder.e.price};
     if (buyOrder.e.shares >= sellOrder.e.shares){
         buyOrder.e.shares -= sellOrder.e.shares;
-        firmFlows[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares * price; // should definitely make these std::uint32 but we take almost no perf hit from this right now.
-        firmFlows[std::string(buyOrder.e.firm, 4)] -= sellOrder.e.shares * price; 
-        firmShares[std::string(sellOrder.e.firm, 4)] += sellOrder.e.shares;
-        firmShares[std::string(buyOrder.e.firm, 4)] -= sellOrder.e.shares; 
+        firmFlows[firmNametoInt(sellOrder.e.firm)] += sellOrder.e.shares * price; // should definitely make these std::uint32 but we take almost no perf hit from this right now.
+        firmFlows[firmNametoInt(buyOrder.e.firm)] -= sellOrder.e.shares * price; 
+        firmShares[firmNametoInt(sellOrder.e.firm)] += sellOrder.e.shares;
+        firmShares[firmNametoInt(buyOrder.e.firm)] -= sellOrder.e.shares; 
         sellOrder.e.shares = 0;
     } else{
         sellOrder.e.shares -= buyOrder.e.shares;
-        firmFlows[std::string(sellOrder.e.firm, 4)] += buyOrder.e.shares * price;
-        firmFlows[std::string(buyOrder.e.firm, 4)] -= buyOrder.e.shares * price;
-        firmShares[std::string(sellOrder.e.firm, 4)] += buyOrder.e.shares;
-        firmShares[std::string(buyOrder.e.firm, 4)] -= buyOrder.e.shares;
+        firmFlows[firmNametoInt(sellOrder.e.firm)] += buyOrder.e.shares * price;
+        firmFlows[firmNametoInt(buyOrder.e.firm)] -= buyOrder.e.shares * price;
+        firmShares[firmNametoInt(sellOrder.e.firm)] += buyOrder.e.shares;
+        firmShares[firmNametoInt(buyOrder.e.firm)] -= buyOrder.e.shares;
         buyOrder.e.shares = 0;
     }
 }
@@ -73,8 +81,8 @@ void OrderBook::consume(const OuchEnterOrder& order) {
             updateMaxMin(order.price, order.side);
             auto& priceList{book[convertPriceToIndex(order.price)]}; // get the list for orders on this price
             priceList.emplace_back(order, counter);
-            std::string token_view(priceList.back().e.token, OrderBookConstants::tokenLength);
-            tokenMap[token_view] = &priceList.back();
+            
+            tokenMap[charsToToken(priceList.back().e.token)] = &priceList.back();
             break;
         }
         case 'U':
@@ -82,7 +90,7 @@ void OrderBook::consume(const OuchEnterOrder& order) {
             const OuchReplaceOrder& replaceOrder = reinterpret_cast<const OuchReplaceOrder&>(order);
             
             // check that this order to update actually exists
-            auto it = tokenMap.find(replaceOrder.existing_token);
+            auto it = tokenMap.find(charsToToken(replaceOrder.existing_token));
             if (it != tokenMap.end()){ 
                 OuchEnterOrder& originalOrder{it->second->e};
                 if(originalOrder.type == 'X') {return;} // if cancelled, we don't need to replace!
@@ -102,8 +110,7 @@ void OrderBook::consume(const OuchEnterOrder& order) {
                 strncpy(priceListForReplace.back().e.token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
 
                 //update the tokenMap
-                std::string token_view(priceListForReplace.back().e.token, OrderBookConstants::tokenLength);
-                tokenMap[token_view] = &priceListForReplace.back();
+                tokenMap[charsToToken(priceListForReplace.back().e.token)] = &priceListForReplace.back();
                 
                 // cancel the original
                 it->second->e.type = 'X';
@@ -114,7 +121,7 @@ void OrderBook::consume(const OuchEnterOrder& order) {
          case 'X': 
          {
             const OuchCancelOrder& cancelOrder = reinterpret_cast<const OuchCancelOrder&>(order);
-            auto it = tokenMap.find(cancelOrder.token);
+            auto it = tokenMap.find(charsToToken(cancelOrder.token));
             if (it != tokenMap.end()){ // if real
 
                 it->second->e.type = 'X'; // cancel
@@ -136,6 +143,11 @@ void OrderBook::consume(const OuchEnterOrder& order) {
         std::list<OuchOrderWrapper>& buyList =  book[convertPriceToIndex(currentMaxBuyPrice)];// this is the index of the order at that price, not the index of the price in the book
         std::list<OuchOrderWrapper>& sellList = book[convertPriceToIndex(currentMinSellPrice)];
 
+
+        // we can do way better than this
+        // instead of iterating here, we can just have an O(log n) time cost for creating a new book price list?
+        // or to be honest... we could just maintain a sorted list of the things
+        // this would be O(1) popping guarenteed and we would do O(log n) insertions... This would prevent a lot of spiking
         if (buyList.empty()){
             --currentMaxBuyPrice;
             continue;
@@ -147,13 +159,13 @@ void OrderBook::consume(const OuchEnterOrder& order) {
 
         // get to max buy side 
         while (!buyList.empty() && (buyList.front().e.type == 'X' || buyList.front().e.side != 'B' || buyList.front().e.shares == 0)){
-            tokenMap.erase(buyList.front().e.token);
+            tokenMap.erase(charsToToken(buyList.front().e.token)); // this is scary because if this doesn't happen before BuyList we cooked
             buyList.pop_front();
         }
 
         // minimum sell side 
         while (!sellList.empty() && (sellList.front().e.type == 'X' || sellList.front().e.side != 'S' || sellList.front().e.shares == 0)){
-            tokenMap.erase(sellList.front().e.token);
+            tokenMap.erase(charsToToken(sellList.front().e.token));
             sellList.pop_front();
         }
 
