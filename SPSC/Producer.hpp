@@ -63,7 +63,7 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
     while(!terminateFlag.load(std::memory_order_relaxed)){ // can use volatile here for intel bc of ordering guarentees; complies to same thing 
         i = 0; // maxPull calcs the number of cells left between tail and head so tail does not eat head!
 
-        // how do we actually need the compiler to order these accesses?
+         // how do we actually need the compiler to order these accesses?
          // premature optimization for my brain :)
         for (; i < min(MSG_GLOBALS::MSG_BATCH_SIZE, maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++){//min( ,maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++) { // how do we vectorize this loop? -- optimzation potential with changing to struct of arrays for AVX
             //msgs[i].msg_hdr.msg_iov->iov_base = &q.buffer[tail+i % q.bufferSize] // update where to store messages! put at the tail of ring buffer

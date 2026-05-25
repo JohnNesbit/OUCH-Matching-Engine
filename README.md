@@ -32,7 +32,24 @@ What we see here is that as we increase the time of the simulation, the total pa
 
 My first idea of fixing this is to ensure our recvmmsg thread never gets slept by the scheduler if it times out, which will hopefully cause it to poll the whole time and not let bursts come in without taking messages from the socket at a higher rate.
 
-Wow... I ran lscpu and realized I only have 4 physical cores... setting the affinity correctly and disabling irqs on the three I use for SCPSC and the simulator, I literally double the output to 200k/s. Lets re-perf! Looks like the rate of accept to receive is now ~99%.
+Wow... I ran lscpu and realized I only have 4 physical cores... setting the affinity correctly and disabling irqs on the three I use for SCPSC and the simulator, I literally double the output to 200k/s. Insane! It looks like all along the huge bottleneck there was literally the producer just being slept and then packets getting rejected by the kernel for a full socket queue! With a receive rate of about 1, we know that the actual bottleneck here is now in the the simulator rather than the producer. Lets perf the simulator!
+
+![](Images/afterBoundSendmmsgPerfs.png)
+
+Okay, the context switching overhead is actually only 1/39 of the used cpu time. It looks like 7/39 is on nf hooks, which is a clear candidate to get rid of. That is far from a major breakthrough though or the context-switch bound situation that we people online talk about needing io_uring for. Looking further, 14/38 of the time is actually spent... recieveing?
+
+![](Images/ip_recv_perf.png)
+
+So, we receive with 14%/39% of our sender thread, which 7% of that 14% is nf_hooks again, meaning that we spend 14/39 on nf_hooks and we do 7% of the sender thread on actually putting our message within the socket for the recv thread. Of that 7%, we are actually spending half on a spinlock on the socket.
+
+So, the obvious next step here to optimize our sender is turning off our network hooks(looks like our local deliver(NF_INET_LOCAL_IN) and outward send hoooks(NF_INET_LOCAL_OUT) are triggering) and then maybe getting the receive of the packet onto a different thread(ideally the systems core 0 rather than the producer/recv thread). Lets do that!
+
+Well, also here we have to make a decision about how we want to think about this simulation. Because we are just sending packets between two applications, we could use eBPF to directly link them, however, I think that is contrary to waht I want to learn in optimizing this stack, instead, I would rather pretend(or actually steup) a network interface that passes these packets so there is room to optimize down there later as well. Because of that, I'm going to use veth(reccommended by Claude as a way to simulate this). This will do the pass over the data-link layer. All this entailed was creating two network namespaces and binding veth interfaces to each other within the namespaces as described in [this](https://superuser.com/questions/764986/howto-setup-a-veth-virtual-network). Because we have a virtual network interface(only bound between two veth interfaces inside two network namespaces) we load them individually in the sender and recieving threads, bind our sockets, and then we can use SO_BINDTODEVICE which will bypass our network hooks!
+
+![](Images/postVethPerf.png)
+
+As you can see, our overhead from our network filtering hooks is gone now that we are on our private network namespaces! After this change, we get boosted to 360k/s with >99% packet reception rate on our producer. Despite this victory, we still see that 14%/35% of our sender is actually still doing the direct local_ip delivery and doing the ip_recv function itself within the softirq's. Really, we would like the irq's to get picked up by our allocated system cores rather than the ones we have running our sender. Our irq's are presumably being triggered by our tranmission queue since we see that queue_xmit function. Because this is not actually one process part of our send, we can set our irq affinity to 0 for that core to prevent this(and also all the other non-sys cores while we are at it).
+
 
 ## 2. Multiplexed Ports and Async IO
 
