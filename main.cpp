@@ -116,15 +116,23 @@ int main(int argc, char* argv[]){
     std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkFlowValid() << " and " << accumulator.checkSharesValid() << std::endl;
     std::cout << "Total trades processed: " << accumulator.getCounter() << std::endl;
 
-    auto book = accumulator.getBook();
-    int numOrders{};
-    for(int i{}; i < OrderBookConstants::PriceRange; ++i){
-        numOrders += book[i].size();
-        for (auto p : book[i]){
-            std::cout << "Type: " << p.e.type << " Side: " << p.e.side << " Price: " << p.e.price << " Id: " << p.id << std::endl;
-        }
+    auto buyBook = accumulator.getBuyHeap();
+    auto sellBook = accumulator.getSellHeap();
+    std::size_t numOrders{buyBook.size() + sellBook.size()};
+    pqObject p = buyBook.top();
+    while(!buyBook.empty()){
+        p = buyBook.top();
+        std::cout << "Side: B " << " Price: " << p.price << std::endl; // " Id: " << std::string(p.t.token, 14) << 
+        buyBook.pop();
+    }
+
+    while(!sellBook.empty()){
+        p = sellBook.top();
+        std::cout << "Side: S " << " Price: " << p.price  << std::endl; // << " Id: " << std::string(p.t.token, 14)
+        sellBook.pop();
     }
     
+    std::cout << "max book size: " << accumulator.getMaxSize() << std::endl;
     std::unordered_map<std::uint32_t, long long>& flows = accumulator.getFirmFlows();
     std::unordered_map<std::uint32_t, long long>& shares = accumulator.getFirmShares();
 
@@ -138,7 +146,7 @@ int main(int argc, char* argv[]){
         if (it->second > mostShares){
             mostShares = it->second;
             std::cout << it->first << " should equal ";
-            std::string a{reinterpret_cast<const char*>(&it->first)}; 
+            std::string a{reinterpret_cast<const char*>(&it->first), 3}; 
             std::cout << a  << std::endl;
             priceOfMostShares = std::abs(flows[it->first]);
         }

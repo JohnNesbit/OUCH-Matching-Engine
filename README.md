@@ -60,13 +60,23 @@ Interestingly enough, however, at this point we seem to be bound on our consumer
 
 Because of this, I figure it is about time to optimize the orderbook logic itself. 
 
-![]()
+Image(I forgot to screeshot this one at the time but still wrote about it at then)
 
-huh.. weird, 1/3 of the time of the consumer is waiting on the producer and 2/3 of the time of the consumer is waiting on the producer. What this likely means is our consumer has some really heavy peaks which halt the consumer and then lap around quickly, making the producer wait on the consumer 1/3 of the time(it should be 0% ideally). Roughly 20% of the consumer's time is spent in the consume function.
+huh.. weird: 1/3 of the time of the consumer is waiting on the producer and 2/3 of the time of the consumer is waiting on the producer. What this likely means is our consumer has some really heavy peaks which halt the consumer and then lap around quickly, making the producer wait on the consumer 1/3 of the time(it should be 0% ideally). Roughly 20% of the consumer's time is spent in the consume function.
 
-To prevent spiking, I re-structured the actual trade execution. Instead of storing all trades in an array of prices with a DLL of orders in each, I just am making a heap for buy and sell which allows for which comparisons at the top of each, making execution O(log n * k) where n is the size of the order book and k is the number of trades executed. This compares to the previous algortihm which was O(l) on l being the range of the spread of the orderbook.
-    - another approach would have been doing binary search across the spread to find the next highest sell/lowest buy as fast as possible.
+To prevent spiking, I re-structured the actual trade execution. Instead of storing all trades in an array of prices with a DLL of orders in each, I just am making a heap for buy and sell which allows for which comparisons at the top of each, making execution O(log n * k) where n is the size of the order book and k is the number of trades executed. This compares to the previous algortihm which was O(l) on l being the range of the spread of the orderbook, which could be up to 4096 operations of checking if std::list objects are empty. An important thing to also note is that our orderbook never gets all that large since our generation function is uniformly distributed around the spread.
 
+The redesign is this: keep all the orders in memory in a token -> order hashmap. Then, we only need insert operations and pop to run our buy/sell heaps. We can just tombstone all of the cancel/replace operations within the hashmap in O(1). The great thing about this is we also get contiguous accesses on the std::Vector backing our heaps on small objects that fit in the cache(just a token + pointer duo). This setup puts in work and got us down to less than 5% of the consumer time! If we assume relatively evenly distributed compute across consumes, we could 20x our numbes with this current consumer! Below is a snapshot of the post-optimization perf:
+
+![](Images/postOptimizedConsumer.png)
+
+if the small percentage of high overhead calls... increase buffer size!
+
+Wow... I toyed around with the parameters and was really was suprised by this. Increasing the size of the simulator send batches to 2048 just gave 750k/s.... However, increasing the size of the producer gave almost no gains in processed packets, rather, it caps out at 380k/s. This is really interesting partially because when we increase the size of the buffer, which should amortize the more expensive cleanup/realloc consumer calls and make the consumer more consistent, it doesn't help at all. A couple things could be the case here: the first is just that we have a much slower consumer than producer. The second is just that we are bound somehow on the speed of writes to userspace. We havent had a SPSC-bound system in a little while so lets see what is going on here.
+
+
+
+interestingly, the split on everything is the exact same... it never was the sender. So, what is going on here? Consumer only spends 5% of its time doing anything other than waiting, but Producer says it is spending 30% of its time waiting on the Consumer? This doesn't even change when upping the buffer size 100x. Huh?
 
 ## 2. Multiplexed Ports and Async IO
 

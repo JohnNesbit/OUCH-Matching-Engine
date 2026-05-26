@@ -4,6 +4,7 @@
 #include <string>
 #include <cstring>
 #include <string_view>
+#include <algorithm>
 #include <exception>
 #include "OrderSimulator/OUCH.hpp"
 #include "OrderBook.hpp"
@@ -78,11 +79,16 @@ void OrderBook::consume(const OuchEnterOrder& order) {
     switch (order.type){
         case 'O':
         {
-            updateMaxMin(order.price, order.side);
-            auto& priceList{book[convertPriceToIndex(order.price)]}; // get the list for orders on this price
-            priceList.emplace_back(order, counter);
-            
-            tokenMap[charsToToken(priceList.back().e.token)] = &priceList.back();
+
+            if(order.side == 'S'){
+                sellHeap.emplace(order.price, charsToToken(order.token));
+            } else{
+                buyHeap.emplace(order.price, charsToToken(order.token));
+            }
+
+            tokenMap.emplace(std::piecewise_construct,
+                            std::forward_as_tuple(charsToToken(order.token)),
+                            std::forward_as_tuple(order, counter));
             break;
         }
         case 'U':
@@ -92,28 +98,33 @@ void OrderBook::consume(const OuchEnterOrder& order) {
             // check that this order to update actually exists
             auto it = tokenMap.find(charsToToken(replaceOrder.existing_token));
             if (it != tokenMap.end()){ 
-                OuchEnterOrder& originalOrder{it->second->e};
-                if(originalOrder.type == 'X') {return;} // if cancelled, we don't need to replace!
+                OuchEnterOrder& originalOrder{it->second.e};
+                if(originalOrder.type == 'X') {break;} // if cancelled, we don't need to replace!
 
-                // create new order *updated*
-                updateMaxMin(replaceOrder.price, originalOrder.side);
-
-                // we are copying over the original order and then changing the fields which is dumb. Original is modified but it is cancelled anyway
+                // copy over replacement fields for easy copy into new element
                 originalOrder.shares = replaceOrder.shares;
                 originalOrder.price = replaceOrder.price;
 
-                // copy over the modified original
-                auto& priceListForReplace{book[convertPriceToIndex(replaceOrder.price)]};
-                priceListForReplace.emplace_back(originalOrder, counter); 
+                // cancel the original since we cannot remove from a heap
+                it->second.e.type = 'X';
+
+                // create a new order for the replacement token and add it to the heap and hashmap
+                tokenMap.emplace(std::piecewise_construct,
+                                std::forward_as_tuple(charsToToken(replaceOrder.replacement_token)),
+                                std::forward_as_tuple(originalOrder, counter));
+
+
+                if(order.side == 'S'){
+                    sellHeap.emplace(replaceOrder.price, charsToToken(replaceOrder.replacement_token));
+                } else{
+                    buyHeap.emplace(replaceOrder.price, charsToToken(replaceOrder.replacement_token));
+                }
 
                 // then copy the token in-place to preserve the original's token for cancellation
-                strncpy(priceListForReplace.back().e.token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
+                //strncpy(priceListForReplace.back().e.token, replaceOrder.replacement_token, OrderBookConstants::tokenLength);
 
                 //update the tokenMap
-                tokenMap[charsToToken(priceListForReplace.back().e.token)] = &priceListForReplace.back();
-                
-                // cancel the original
-                it->second->e.type = 'X';
+                //tokenMap[charsToToken(priceListForReplace.back().e.token)] = &priceListForReplace.back();
             }
             // if order didn't exist, we do nothing
             break;
@@ -123,31 +134,41 @@ void OrderBook::consume(const OuchEnterOrder& order) {
             const OuchCancelOrder& cancelOrder = reinterpret_cast<const OuchCancelOrder&>(order);
             auto it = tokenMap.find(charsToToken(cancelOrder.token));
             if (it != tokenMap.end()){ // if real
-
-                it->second->e.type = 'X'; // cancel
+                it->second.e.type = 'X'; // cancel
             }
             // Technically we should update continusouly before we cancel, but that is up to details, and.... its easier to write the boring code for this version
             break;
          }
     };
 
+    maxSize = std::max(tokenMap.size(), maxSize);
+
     // don't cross the book!
     // this is amortize O(1) because we necessarily don't do more than one execution per order(more like .3 per order)
     // just two-pointer up from min sell price and down from max buy price until the book is no longer crossed!
 
-    while(currentMaxBuyPrice >= currentMinSellPrice){
-        
+    while(!buyHeap.empty() && !sellHeap.empty() && (buyHeap.top().price >= sellHeap.top().price)){
+        //std::lower_bound
+        //std::lower_bound(book.begin(), book.end(), i);
+        //currentMaxBuyPrice = 
+        //currentMinSellPrice = 
         // actually, we need to renew the order whenever it is cancelled or has zero quantity.or isn't on the side we are getting!
         // what this means is that 
 
-        std::list<OuchOrderWrapper>& buyList =  book[convertPriceToIndex(currentMaxBuyPrice)];// this is the index of the order at that price, not the index of the price in the book
-        std::list<OuchOrderWrapper>& sellList = book[convertPriceToIndex(currentMinSellPrice)];
+        //std::list<OuchOrderWrapper>& buyList =  book[convertPriceToIndex(currentMaxBuyPrice)];// this is the index of the order at that price, not the index of the price in the book
+        //std::list<OuchOrderWrapper>& sellList = book[convertPriceToIndex(currentMinSellPrice)];
 
 
+        // do lower bound with search between currentMaxBuyPrice and 0, do currentMinSellPrice and 4096
         // we can do way better than this
         // instead of iterating here, we can just have an O(log n) time cost for creating a new book price list?
         // or to be honest... we could just maintain a sorted list of the things
-        // this would be O(1) popping guarenteed and we would do O(log n) insertions... This would prevent a lot of spiking
+        // this would be O(1) popping guarenteed and we would do O(log n) insertions... This would prevent a lot of stuff
+
+        // also actually lets just use std::lower_bound with .empty()
+
+        // because our order list is never more than like 25, 
+        /*
         if (buyList.empty()){
             --currentMaxBuyPrice;
             continue;
@@ -155,23 +176,25 @@ void OrderBook::consume(const OuchEnterOrder& order) {
         if (sellList.empty()){
             ++currentMinSellPrice;
             continue;
-        }
+        }*/
 
         // get to max buy side 
-        while (!buyList.empty() && (buyList.front().e.type == 'X' || buyList.front().e.side != 'B' || buyList.front().e.shares == 0)){
-            tokenMap.erase(charsToToken(buyList.front().e.token)); // this is scary because if this doesn't happen before BuyList we cooked
-            buyList.pop_front();
+        while (!buyHeap.empty() && (tokenMap[buyHeap.top().t].e.type == 'X' || tokenMap[buyHeap.top().t].e.shares == 0)){
+            tokenMap.erase(buyHeap.top().t);
+            buyHeap.pop();
+             // this is scary because if this doesn't happen before BuyList we cooked
         }
 
         // minimum sell side 
-        while (!sellList.empty() && (sellList.front().e.type == 'X' || sellList.front().e.side != 'S' || sellList.front().e.shares == 0)){
-            tokenMap.erase(charsToToken(sellList.front().e.token));
-            sellList.pop_front();
+        while (!sellHeap.empty() && (tokenMap[sellHeap.top().t].e.type == 'X' || tokenMap[sellHeap.top().t].e.shares == 0)){
+            tokenMap.erase(sellHeap.top().t);
+            sellHeap.pop();
+             // this is scary because if this doesn't happen before BuyList we cooked
         }
 
         // do the trade and continue
-        if(!buyList.empty() && !sellList.empty()) {
-            doTrade(buyList.front(), sellList.front());
+        if(!buyHeap.empty() && !sellHeap.empty()) {
+            doTrade(tokenMap[buyHeap.top().t], tokenMap[sellHeap.top().t]);
         }
     }
 }

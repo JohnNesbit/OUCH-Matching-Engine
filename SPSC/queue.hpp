@@ -10,9 +10,9 @@ concept isConsumerOf = requires(T consumed, A consumer) {
 };
 
 namespace MSG_GLOBALS {
-    constexpr int MSG_BATCH_SIZE = 128; // for the producer
-    constexpr int MSG_MAX_SIZE = 128;//193; // max size of an OUCH message with all flags is 193 bytes
-    constexpr double TIMEOUT = 1000000; // 1ms timeout
+    constexpr int MSG_BATCH_SIZE = 256; // for the producer
+    constexpr int MSG_MAX_SIZE = 48;//193; // max size of an OUCH message with all flags is 193 bytes
+    constexpr double TIMEOUT = 100000; // 1ms timeout
 }
 
 // we do std::allocator and break RAII so that T does not need to be default constructable!

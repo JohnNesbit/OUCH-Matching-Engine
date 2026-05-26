@@ -6,6 +6,7 @@
 #include <atomic>
 #include <map>
 #include <unordered_map>
+#include <queue>
 #include "OrderSimulator/OUCH.hpp"
 
 // IMPORTANT: THIS OBJECT IS NOT ZERO-COPY, DUE TO ASSUMING THAT THE CALLING CONSUMER CANNOT STD::MOVE ITS OBJECTS DUE TO NO ALLOCATIONS IN HOT PATH, THE CONSUMER PUTS ALLOCATIONS
@@ -67,6 +68,12 @@ struct token {
     char token[14];
 };
 
+struct pqObject{
+    pqObject(int price, const token& t): t{t}, price{price} {}
+    token t;
+    int price;
+};
+
 template<>
 struct std::hash<token> {
     size_t operator()(const token& t) const {
@@ -77,6 +84,9 @@ struct std::hash<token> {
 inline bool operator==(const token& a, const token& b) {
     return std::memcmp(a.token, b.token, 14) == 0;
 }
+
+inline auto maxHeapFunctor = [](const pqObject& a, const pqObject& b){ return a.price < b.price; };
+inline auto minHeapFunctor = [](const pqObject& a, const pqObject& b){ return a.price > b.price; };
 
 class OrderBook {
     public:
@@ -95,7 +105,9 @@ class OrderBook {
         std::unordered_map<std::uint32_t, long long>& getFirmShares(){return firmShares;}
         std::unordered_map<std::uint32_t, long long>& getFirmFlows(){return firmFlows;}
         long getCounter(){return OrderBook::counter;}
-        std::list<OuchOrderWrapper>* getBook(){return book;};
+        auto& getBuyHeap(){return buyHeap;}
+        auto& getSellHeap(){return sellHeap;}
+        std::size_t getMaxSize(){return maxSize;}
         ~OrderBook(){
         }
 
@@ -109,24 +121,31 @@ class OrderBook {
         // no, these are only 1,500,000 at most, fine to static cast later.
         int currentMinSellPrice{std::numeric_limits<int>::max()};
         int currentMaxBuyPrice{};
+        std::size_t maxSize{};
 
         // std::vector is the incorrect took here. we need fast tail and head accesses, but don't care about random access
         // we need dynamic memory allocation
         //
-        std::list<OuchOrderWrapper> book[OrderBookConstants::PriceRange]; // hold all the orders for that level of granularity! I.e. for that 4th place
+
+        // test if it is worth it to map an int or a pointer to the token to accelerate the prefetching/ops on this
+        std::priority_queue<pqObject, std::vector<pqObject>, 
+                    decltype(maxHeapFunctor)> buyHeap; // largest first
+        std::priority_queue<pqObject, std::vector<pqObject>,  
+                    decltype(minHeapFunctor)> sellHeap;
+
+        //std::list<OuchOrderWrapper> book[OrderBookConstants::PriceRange]; // hold all the orders for that level of granularity! I.e. for that 4th place
         // need to mantain atomics for orderbook so we don't get weird stuff
         // taring IS a concern because our struct is larger than the cache line size :(
         // less than cache line size
         // 4096 size
 
-        // string view to char[4]
         std::unordered_map<std::uint32_t, long long> firmShares; // hold shares in each company
         std::unordered_map<std::uint32_t, long long> firmFlows; // hold how much owed/owe
         // hold company inflow and outflow
 
         // O(1) cancellation and replacement access
         // could use std:ref here, but unorderded maps dont delete on erasure so this is fine as long as we remove from here when ever we pop()
-        std::unordered_map<token, OuchOrderWrapper*> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
+        std::unordered_map<token, OuchOrderWrapper> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
         // lower hot-path overhead for the consumer threads!
 
         long counter{0};
