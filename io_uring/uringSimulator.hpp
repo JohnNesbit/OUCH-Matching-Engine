@@ -17,7 +17,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <iostream>
-#include "systemVars.hpp"
+#include <liburing>
 
 // create concept: T needs to have a generator function!
 // T doesn't actually need a constructor? Kinda does need a destructor though!
@@ -61,43 +61,32 @@ class exchangeSimulator {
         int sockfd;
         int port;
         int batchSize;
+        int concurrent{5}; // sets how many send() minibatches should be going at any one point
         int counter{};
         struct sockaddr_in addr;
-        std::allocator<T> allocator; // define allocator before so member initializer list goes in the right order!
-        std::unique_ptr<struct mmsghdr[]> msgs; // we use unique_ptr to C-style instead of vectors because vectors don't let us get non-const refs to their elements
         std::unique_ptr<struct iovec[]> iovecs; // heap allocating all of this because batch size could be up to 1024 and these structs are >4 bytes so not lovely on stack T could be quite large 
-        T* sendBuffer; // dont want our thing to get default constructed btw so we have to do some tricky things
+        std::unique_ptr<T[]> sendBuffer; // dont want our thing to get default constructed btw so we have to do some tricky things
 };
 
 
 template<triviallyDestructable T>
 exchangeSimulator<T>::exchangeSimulator(int port, int batchSize)
-         : port{port}, batchSize{batchSize}, allocator(),  msgs{std::make_unique<struct mmsghdr[]>(batchSize)}, iovecs{std::make_unique<struct iovec[]>(batchSize)}, sendBuffer{allocator.allocate(batchSize)} {
+         : port{port}, batchSize{batchSize}, iovecs{std::make_unique<struct iovec[]>(batchSize*concurrent)}, sendBuffer{std::unique_ptr<T[]>(batchSize*concurrent)} {
     
-    for (int i{}; i < batchSize; ++i) {
-        iovecs[i].iov_base = &sendBuffer[i];
+    for (int i{}; i < batchSize*concurrent; ++i) {
+        iovecs[i].iov_base = &sendBuffer[i]; // this always binds it to the right spot so we don't have to mess with iovec values from now on
         iovecs[i].iov_len = sizeof(T);
-        msgs[i].msg_hdr.msg_iov = &iovecs[i];
-        msgs[i].msg_hdr.msg_iovlen = 1;
     }
 
 }
 
-// concept that G must have void generator(T&)
-
 template<triviallyDestructable T>
 template<class G>
-//requires isGenerator<G, T>
 void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct sockaddr_in* dst, G& generator){
-        /*
-       ssize_t sendto(int socket, const void *message, size_t length,
-           int flags, const struct sockaddr *dest_addr,
-           socklen_t dest_len);
-    */
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(systemVars::simulatorCore, &cpuset); // Bind to core 1(no hyperthreads)
+    CPU_SET(1, &cpuset); // Bind to core 1(no hyperthreads)
     pthread_t current_thread = pthread_self();
     pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset); // bind to core 7! Should not be interrupted, need this to be our "clock" of sorts
     
@@ -144,28 +133,68 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
         throw std::runtime_error("Could not bind to interface");
     }
     // end old constructor
-
-    // connect syscall
-   // have to reinterpret cast here because that is how c/linux does polymorphism without classes, top parts of class are still accessible after reinterpret case if shared
+    // have to reinterpret cast here because that is how c/linux does polymorphism without classes, top parts of class are still accessible after reinterpret case if shared
     connect(sockfd, reinterpret_cast<const sockaddr*>(dst), sizeof(*dst));
-    int retval;
-    while(!terminateFlag.load(std::memory_order_relaxed)){ // this is so fast that basically 100% of time is spend blocked by kernel doing I/O.
-        // basically between in system, it appears that 300k is just fully on outgoing kernel I/O rather than the incoming processing!
+    
 
-        for(int i{}; i < batchSize; ++i){
-            generator.generate(&sendBuffer[i]); // pass as reference, in-place construction of type T, do it this way because std::vector makes the object construct its self with .emplace()
-        }        
-        /*
-               int sendmmsg(unsigned int n;
-                    int sockfd, struct mmsghdr msgvec[n], unsigned int n,
-                    int flags);
+    // setup io_uring for simulator, times two for a little bit of room just in case
+    struct io_uring ring;
+    io_uring_queue_init(batchSize*concurrent, &ring, IORING_FEAT_CQE_SKIP | IORING_SETUP_SQPOLL | IORING_SETUP_SUBMIT_ALL);
+    struct io_uring_sqe *sqe{};
+    struct io_uring_cqe *cqe{};
+    // design for the simulator is just going to be adding a vectorized send and then looping on completion queue returns. Going to keep a count to ensure n message requests are always in SQ
+    
+    /*
+       void io_uring_prep_send(struct io_uring_sqe *sqe,
+                               int sockfd,
+                               const void *buf,
+                               size_t len,
+                               int flags);
+    */
+    // IORING_SEND_VECTORIZED, we don't want to do zero-copy because we legit are < 1 cache line so one op :D
+    // need IOSQE_BUFFER_SELECT to serialize but this is just the sim so I don't care about correctness here.(Worse Is Better)
+    //io_uring_prep_send(sqe, sockfd, &iovecs, batchSize, IORING_SEND_VECTORIZED)
+    // basically we have a bunch of vectorized calls, each of size bufferSize/concurrent = batchSize
+    // we maintain track of how many concurrent by incrementing on SQ and decrementing on CQ.
+    // this means we never slow down the kernel/
 
-        */
-        retval = sendmmsg(sockfd, msgs.get(), batchSize, 0);
+    // structure will be filling the send buffer on start and then polling the completion queue
+    // when we get back our index from the user_data field, we can reset that message batch and send another vectorized call to keep concurrent sends at needed value!
+
+
+    // build initial messages
+    for(int i{}; i < batchSize*concurrent; ++i){
+        generator.generate(&sendBuffer[i]); 
+    }    
+
+    // fill up queue on init!
+    for (std::uint64_t i{}; i < concurrent; ++i){
+        sqe = io_uring_get_sqe(ring);
+        io_uring_prep_send(sqe, sockfd, &iovecs[batchSize*i], batchSize, IORING_SEND_VECTORIZED);
+        io_uring_sqe_set_data(sqe, i);
+        io_uring_submit(ring);
+    }
+
+    int retval{};
+    int replacingIndex{};
+    while(!terminateFlag.load(std::memory_order_relaxed)){
+
+        // poll completion queue and re-build and re-send as completions come in!
+        retval = io_uring_wait_cqe(ring, &cqe);
         if (retval < 0){
-            std::cout << retval << std::endl;
-        } else {
-            counter += retval;
+            continue;
         }
+        replacingIndex = cqe->user_data;
+        io_uring_cqe_seen(ring, cqe);
+    
+        // generate new data for batch
+        for(int i{}; i < batchSize; ++i){
+            generator.generate(&sendBuffer[i+replacingIndex*batchSize]);
+        }
+        // send message
+        sqe = io_uring_get_sqe(ring);
+        io_uring_prep_send(sqe, sockfd, &iovecs[batchSize*replacingIndex], batchSize, IORING_SEND_VECTORIZED);
+        io_uring_sqe_set_data(sqe, replacingIndex);
+        io_uring_submit(ring);
     }
 }

@@ -76,8 +76,13 @@ Huh... I think I misinterpreted our last perf. I assumed that since only half of
 
 Well, it is just doing the send syscall the entire time. Looks like our bottleneck is wholly just this syscall. We've already stopped the nethooks and this is just doing the direct to the xmit transmission queue and back. Its time to get rid of some of this syscall overhead. Io_uring time!
 
+At this point, I should note that I am switching over to a different reference machine with 8 physical cores which will allow pinning differently. With the machine switch we get to 500k/s. That machine is running a 8840HS Ryzen 7 processor with 16GB of RAM.
 
-## 2. Multiplexed Ports and Async IO
+## 2. IO_URING
+
+The architecture of a SPSC queue starts making a lot less sense when putting in a read call has almost no overhead(like with IO_URING). It makes a lot more sense in the scenario to only have a consumer thread. We will still maintain a ring buffer, but we will use it quite differently. Because an orderbook needs to maintain in-order execution, we will loop linearly through our ring buffer on our consumer. When we consume an object, we will zero out the memory and put a SQE on the io_uring mmaped SQ ring buffer. Because we will pre-build our SQE struct, we can just memcpy and edit the pointer value which is optimized into a single write operation. We also don't give up batching recv because we can do multiple consumes before sending those buffer spots out to the kernel(although we will see if this even matters).
+
+IOSQE_CQE_SKIP_SUCCESS - will only poll buffer that iovec points to, no need for CQE unless debugging.
 
 ## 3. Kernel Bypass
 
