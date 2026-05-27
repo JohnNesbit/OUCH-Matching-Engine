@@ -153,7 +153,6 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
 
         for(int i{}; i < batchSize; ++i){
             generator.generate(&sendBuffer[i]); // pass as reference, in-place construction of type T, do it this way because std::vector makes the object construct its self with .emplace()
-            counter++;
         }        
         /*
                int sendmmsg(unsigned int n;
@@ -164,7 +163,8 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
         retval = sendmmsg(sockfd, msgs.get(), batchSize, 0);
         if (retval < 0){
             std::cout << retval << std::endl;
-        
+        } else {
+            counter += retval;
         }
     }
 }

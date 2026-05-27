@@ -70,17 +70,14 @@ The redesign is this: keep all the orders in memory in a token -> order hashmap.
 
 ![](Images/postOptimizedConsumer.png)
 
-if the small percentage of high overhead calls... increase buffer size!
+Huh... I think I misinterpreted our last perf. I assumed that since only half of the producer was spent in recvmmsg, it must be waiting on the consumer, however, now with the consumer only spending 2% of its time actually consuming and the rest of the time waiting, I realize that if the recvmmsg call immediately returns with only a couple messages often, it will look like we are spinning on the consumer because we are continually loading the atomic for how much we can add to the ring buffer. In reality, our bottleneck could actually be because of recvmmsg not getting much at a time. So, lets look at the simulator:
 
-Wow... I toyed around with the parameters and was really was suprised by this. Increasing the size of the simulator send batches to 2048 just gave 750k/s.... However, increasing the size of the producer gave almost no gains in processed packets, rather, it caps out at 380k/s. This is really interesting partially because when we increase the size of the buffer, which should amortize the more expensive cleanup/realloc consumer calls and make the consumer more consistent, it doesn't help at all. A couple things could be the case here: the first is just that we have a much slower consumer than producer. The second is just that we are bound somehow on the speed of writes to userspace. We havent had a SPSC-bound system in a little while so lets see what is going on here.
+![](Images/uringTime.png)
 
+Well, it is just doing the send syscall the entire time. Looks like our bottleneck is wholly just this syscall. We've already stopped the nethooks and this is just doing the direct to the xmit transmission queue and back. Its time to get rid of some of this syscall overhead. Io_uring time!
 
-
-interestingly, the split on everything is the exact same... it never was the sender. So, what is going on here? Consumer only spends 5% of its time doing anything other than waiting, but Producer says it is spending 30% of its time waiting on the Consumer? This doesn't even change when upping the buffer size 100x. Huh?
 
 ## 2. Multiplexed Ports and Async IO
-
-Currently working on this. From what I've read, linux spinlocks on each port are a bottleneck since I/O is treated as a normal process(and can thus be happening on multiple cores at the same time). Also, the syscall overhead for context switching can be eliminated with memory mapped ring buffers in io_uring.
 
 ## 3. Kernel Bypass
 

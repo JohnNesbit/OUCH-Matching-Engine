@@ -29,7 +29,7 @@ int main(int argc, char* argv[]){
     int time{1000}; // one second experiment
     constexpr int experimentLoops{10};
     bool experimentFlag{false};
-    int port{8080}, bufferSize{128}, sendSize{128}; // changing the producer batch size requires changing queue.hpp constants
+    int port{8080}, bufferSize{8192}, sendSize{512}; // changing the producer batch size requires changing queue.hpp constants
     switch (argc) { // intentionally fallthrough here
         case 5:
             experimentFlag = static_cast<bool>(std::atoi(argv[4]));
