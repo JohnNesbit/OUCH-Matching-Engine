@@ -1,0 +1,92 @@
+#include <thread>
+#include "uringConsumer.hpp"
+#include "uringSimulator.hpp"
+#include "OrderBook/OrderBook.hpp"
+#include "OrderSimulator/OUCH.hpp"
+
+int main(int argc, char* argv[]){
+
+    using orderType = OuchEnterOrder;
+    using accumulatorType = OrderBook;
+    using generatorType = OuchMockGenerator;
+
+    int time{1000}; // one second experiment
+    int port{8080}, bufferSize{8192}, sendSize{512}; // changing the producer batch size requires changing queue.hpp constants
+    switch (argc) { // intentionally fallthrough here
+        case 4:
+            sendSize = std::atoi(argv[3]);        
+            [[fallthrough]];
+        case 3:
+            bufferSize = std::atoi(argv[2]);
+            [[fallthrough]];
+        case 2:
+            port = std::atoi(argv[1]);
+    }
+    // create exchange
+    accumulatorType accumulator{};
+    uringConsumer<orderType> exchangeQueue(bufferSize, port);
+
+    // create incoming orders simulator(make terminate flag to exit after experiments!)
+    std::atomic<bool> terminateFlag{false};
+    exchangeSimulator<orderType> simulator(port+1, sendSize);
+    
+    // start generator
+    generatorType generator{};
+    std::thread exchangeThread([&simulator, &terminateFlag, &exchangeQueue, &generator](){
+        simulator.run<generatorType>(terminateFlag, exchangeQueue.getAddr(), generator);
+    });
+
+    // run producer and consumer
+    exchangeQueue.PollSocket<accumulatorType>(terminateFlag, accumulator);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(time));
+
+    // end simulation
+    terminateFlag.store(true, std::memory_order_release);
+    exchangeThread.join();
+
+    std::cout << "Total trades sent: " << simulator.getCounter() << std::endl;
+
+    std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkFlowValid() << " and " << accumulator.checkSharesValid() << std::endl;
+    std::cout << "Total trades processed: " << accumulator.getCounter() << std::endl;
+
+    auto buyBook = accumulator.getBuyHeap();
+    auto sellBook = accumulator.getSellHeap();
+    std::size_t numOrders{buyBook.size() + sellBook.size()};
+    pqObject p = buyBook.top();
+    while(!buyBook.empty()){
+        p = buyBook.top();
+        std::cout << "Side: B " << " Price: " << p.price << std::endl; // " Id: " << std::string(p.t.token, 14) << 
+        buyBook.pop();
+    }
+
+    while(!sellBook.empty()){
+        p = sellBook.top();
+        std::cout << "Side: S " << " Price: " << p.price  << std::endl; // << " Id: " << std::string(p.t.token, 14)
+        sellBook.pop();
+    }
+    
+    std::cout << "max book size: " << accumulator.getMaxSize() << std::endl;
+    std::unordered_map<std::uint32_t, long long>& flows = accumulator.getFirmFlows();
+    std::unordered_map<std::uint32_t, long long>& shares = accumulator.getFirmShares();
+
+    // get volume, largest, and price of share paid by largest
+    long long volume{};
+    long long mostShares{};
+    long long priceOfMostShares{};
+    
+    for(auto it{shares.begin()}; it != shares.end(); ++it){
+        volume += std::abs(it->second);
+        if (it->second > mostShares){
+            mostShares = it->second;
+            std::cout << it->first << " should equal ";
+            std::string a{reinterpret_cast<const char*>(&it->first), 3}; 
+            std::cout << a  << std::endl;
+            priceOfMostShares = std::abs(flows[it->first]);
+        }
+    }
+
+    std::cout << "Total Firms: " << shares.size() << " Total share volume: " << volume << " Firm with most shares paid on average: " << priceOfMostShares/mostShares << std::endl;
+    std::cout << "Total Orders Active: " << numOrders << std::endl;
+    return 0;
+}

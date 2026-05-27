@@ -25,6 +25,9 @@ struct OuchEnterOrder {
     char iso;
     uint32_t min_qty;
     char cross_type;
+
+    bool empty(){return type == 0;}
+    void setEmpty(){type = 0;}
 };
 
 struct OuchCancelOrder {

@@ -17,14 +17,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <iostream>
-#include <liburing>
-
-// create concept: T needs to have a generator function!
-// T doesn't actually need a constructor? Kinda does need a destructor though!
-// arrays will be auto delete[] when go out of scope bs unique_ptr
-// concept is that only primitives so no destructor so it is safe when we legit just do the storage trick
-// if we had allocated data, when we allocator.deallocate, the delete[] will not get called to free allocated storage pointed to by T objects
-
+#include <liburing.h>
+#include "systemVars.hpp"
 
 template<class T>
 concept triviallyDestructable = std::is_trivially_destructible_v<T> == true;
@@ -39,23 +33,11 @@ class exchangeSimulator {
     public:
         exchangeSimulator(int, int);
 
-
         template<class G>
-        //requires isGenerator<G, T>
         void run(std::atomic<bool>&, const struct sockaddr_in*, G& generator);
-
-        ~exchangeSimulator(){
-            allocator.deallocate(sendBuffer, batchSize);
-        }
 
         int getCounter(){return counter;}
         void clearCounter(){counter = 0;}
-
-        // rule of 5 because we broke RAII and needed a destructor(unique_ptr default initializes objects and we dont want to default construct!)
-        exchangeSimulator(const exchangeSimulator&) = delete;
-        exchangeSimulator(exchangeSimulator&&) = delete;
-        exchangeSimulator& operator=(exchangeSimulator&&) = delete;
-        exchangeSimulator& operator=(const exchangeSimulator&) = delete;
 
     private:
         int sockfd;
@@ -71,11 +53,11 @@ class exchangeSimulator {
 
 template<triviallyDestructable T>
 exchangeSimulator<T>::exchangeSimulator(int port, int batchSize)
-         : port{port}, batchSize{batchSize}, iovecs{std::make_unique<struct iovec[]>(batchSize*concurrent)}, sendBuffer{std::unique_ptr<T[]>(batchSize*concurrent)} {
+         : port{port}, batchSize{batchSize}, iovecs{std::make_unique<struct iovec[]>(batchSize*concurrent)}, sendBuffer{std::make_unique<T[]>(batchSize*concurrent)} {
     
     for (int i{}; i < batchSize*concurrent; ++i) {
         iovecs[i].iov_base = &sendBuffer[i]; // this always binds it to the right spot so we don't have to mess with iovec values from now on
-        iovecs[i].iov_len = sizeof(T);
+        iovecs[i].iov_len = sizeof(sendBuffer[0]);
     }
 
 }
@@ -86,7 +68,7 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(1, &cpuset); // Bind to core 1(no hyperthreads)
+    CPU_SET(systemVars::simulatorCore, &cpuset); // Bind to core 1(no hyperthreads)
     pthread_t current_thread = pthread_self();
     pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset); // bind to core 7! Should not be interrupted, need this to be our "clock" of sorts
     
@@ -168,11 +150,11 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
     }    
 
     // fill up queue on init!
-    for (std::uint64_t i{}; i < concurrent; ++i){
-        sqe = io_uring_get_sqe(ring);
+    for (std::int64_t i{}; i < concurrent; ++i){
+        sqe = io_uring_get_sqe(&ring);
         io_uring_prep_send(sqe, sockfd, &iovecs[batchSize*i], batchSize, IORING_SEND_VECTORIZED);
-        io_uring_sqe_set_data(sqe, i);
-        io_uring_submit(ring);
+        io_uring_sqe_set_data64(sqe, i);
+        io_uring_submit(&ring);
     }
 
     int retval{};
@@ -180,21 +162,27 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
     while(!terminateFlag.load(std::memory_order_relaxed)){
 
         // poll completion queue and re-build and re-send as completions come in!
-        retval = io_uring_wait_cqe(ring, &cqe);
+        retval = io_uring_wait_cqe(&ring, &cqe);
         if (retval < 0){
             continue;
         }
         replacingIndex = cqe->user_data;
-        io_uring_cqe_seen(ring, cqe);
-    
+        io_uring_cqe_seen(&ring, cqe);
+
+        if (cqe->res > 0){
+            counter += cqe->res;
+        } else{
+            std::cout << cqe->res << std::endl;
+        }
+        
         // generate new data for batch
         for(int i{}; i < batchSize; ++i){
             generator.generate(&sendBuffer[i+replacingIndex*batchSize]);
         }
         // send message
-        sqe = io_uring_get_sqe(ring);
+        sqe = io_uring_get_sqe(&ring);
         io_uring_prep_send(sqe, sockfd, &iovecs[batchSize*replacingIndex], batchSize, IORING_SEND_VECTORIZED);
-        io_uring_sqe_set_data(sqe, replacingIndex);
-        io_uring_submit(ring);
+        io_uring_sqe_set_data64(sqe, replacingIndex);
+        io_uring_submit(&ring);
     }
 }
