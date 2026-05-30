@@ -28,7 +28,7 @@ int main(int argc, char* argv[]){
 
     // create incoming orders simulator(make terminate flag to exit after experiments!)
     std::atomic<bool> terminateFlag{false};
-    exchangeSimulator<orderType> simulator(port+1, sendSize);
+    uringSimulator<orderType> simulator(port+1, sendSize);
     
     // start generator
     generatorType generator{};
@@ -37,13 +37,17 @@ int main(int argc, char* argv[]){
     });
 
     // run producer and consumer
-    exchangeQueue.PollSocket<accumulatorType>(terminateFlag, accumulator);
+    std::thread ConsumerThread([&exchangeQueue, &terminateFlag, &accumulator](){
+        exchangeQueue.PollSocket<accumulatorType>(terminateFlag, accumulator);
+    });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(time));
 
     // end simulation
     terminateFlag.store(true, std::memory_order_release);
     exchangeThread.join();
+    ConsumerThread.join();
+    
 
     std::cout << "Total trades sent: " << simulator.getCounter() << std::endl;
 
@@ -56,13 +60,13 @@ int main(int argc, char* argv[]){
     pqObject p = buyBook.top();
     while(!buyBook.empty()){
         p = buyBook.top();
-        std::cout << "Side: B " << " Price: " << p.price << std::endl; // " Id: " << std::string(p.t.token, 14) << 
+        //std::cout << "Side: B " << " Price: " << p.price << std::endl; // " Id: " << std::string(p.t.token, 14) << 
         buyBook.pop();
     }
 
     while(!sellBook.empty()){
         p = sellBook.top();
-        std::cout << "Side: S " << " Price: " << p.price  << std::endl; // << " Id: " << std::string(p.t.token, 14)
+        //std::cout << "Side: S " << " Price: " << p.price  << std::endl; // << " Id: " << std::string(p.t.token, 14)
         sellBook.pop();
     }
     
@@ -79,9 +83,9 @@ int main(int argc, char* argv[]){
         volume += std::abs(it->second);
         if (it->second > mostShares){
             mostShares = it->second;
-            std::cout << it->first << " should equal ";
-            std::string a{reinterpret_cast<const char*>(&it->first), 3}; 
-            std::cout << a  << std::endl;
+            //std::cout << it->first << " should equal ";
+            //std::string a{reinterpret_cast<const char*>(&it->first), 3}; 
+            //std::cout << a  << std::endl;
             priceOfMostShares = std::abs(flows[it->first]);
         }
     }

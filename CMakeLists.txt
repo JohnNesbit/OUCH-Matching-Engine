@@ -12,7 +12,7 @@ target_sources(SyscallExchange
   PUBLIC
     SPSC/main.cpp SPSC/Producer.cpp OrderBook/OrderBook.cpp
 )
-
+target_link_libraries(SyscallExchange PRIVATE uring)
 
 add_executable(UringExchange)
 target_include_directories(UringExchange PRIVATE ./)
@@ -20,3 +20,4 @@ target_sources(UringExchange
   PUBLIC
     io_uring/main.cpp OrderBook/OrderBook.cpp
 )
+target_link_libraries(UringExchange PRIVATE uring)

@@ -11,6 +11,7 @@
 #include "OrderSimulator/OUCH.hpp"
 #include "OrderBook/OrderBook.hpp"
 #include "OrderBook/debugAccumulator.hpp"
+#include "io_uring/uringSimulator.hpp"
 //#define DEBUGSIM 1
 
 int main(int argc, char* argv[]){
@@ -95,7 +96,7 @@ int main(int argc, char* argv[]){
 
     // create incoming orders simulator(make terminate flag to exit after experiments!)
     std::atomic<bool> terminateFlag{false};
-    exchangeSimulator<orderType> simulator(port+1, sendSize);
+    uringSimulator<orderType> simulator(port+1, sendSize);
     
     // start generator
     generatorType generator{};

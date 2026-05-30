@@ -18,20 +18,15 @@
 #include <unistd.h>
 #include <iostream>
 #include <liburing.h>
+#include "uringConsumer.hpp"
 #include "systemVars.hpp"
 
+
+
 template<class T>
-concept triviallyDestructable = std::is_trivially_destructible_v<T> == true;
-
-template <class Generator, class Generated>
-concept isGenerator = requires(Generated a, Generator gen){
-    {gen.generate(a)} -> std::same_as<void>;
-};
-
-template<triviallyDestructable T>
-class exchangeSimulator {
+class uringSimulator {
     public:
-        exchangeSimulator(int, int);
+        uringSimulator(int, int);
 
         template<class G>
         void run(std::atomic<bool>&, const struct sockaddr_in*, G& generator);
@@ -43,7 +38,6 @@ class exchangeSimulator {
         int sockfd;
         int port;
         int batchSize;
-        int concurrent{5}; // sets how many send() minibatches should be going at any one point
         int counter{};
         struct sockaddr_in addr;
         std::unique_ptr<struct iovec[]> iovecs; // heap allocating all of this because batch size could be up to 1024 and these structs are >4 bytes so not lovely on stack T could be quite large 
@@ -51,20 +45,20 @@ class exchangeSimulator {
 };
 
 
-template<triviallyDestructable T>
-exchangeSimulator<T>::exchangeSimulator(int port, int batchSize)
-         : port{port}, batchSize{batchSize}, iovecs{std::make_unique<struct iovec[]>(batchSize*concurrent)}, sendBuffer{std::make_unique<T[]>(batchSize*concurrent)} {
+template<class T>
+uringSimulator<T>::uringSimulator(int port, int batchSize)
+         : port{port}, batchSize{batchSize}, iovecs{std::make_unique<struct iovec[]>(batchSize)}, sendBuffer{std::make_unique<T[]>(batchSize)} {
     
-    for (int i{}; i < batchSize*concurrent; ++i) {
+    for (int i{}; i < batchSize; ++i) {
         iovecs[i].iov_base = &sendBuffer[i]; // this always binds it to the right spot so we don't have to mess with iovec values from now on
-        iovecs[i].iov_len = sizeof(sendBuffer[0]);
+        iovecs[i].iov_len = UMSG_GLOBALS::MSG_MAX_SIZE;
     }
 
 }
 
-template<triviallyDestructable T>
+template<class T>
 template<class G>
-void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct sockaddr_in* dst, G& generator){
+void uringSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct sockaddr_in* dst, G& generator){
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -121,7 +115,17 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
 
     // setup io_uring for simulator, times two for a little bit of room just in case
     struct io_uring ring;
-    io_uring_queue_init(batchSize*concurrent, &ring, IORING_FEAT_CQE_SKIP | IORING_SETUP_SQPOLL | IORING_SETUP_SUBMIT_ALL);
+
+    struct io_uring_params params;
+    memset(&params, 0, sizeof(params));
+    
+    
+    params.flags = IORING_SETUP_SQPOLL | IORING_FEAT_CQE_SKIP | IORING_SETUP_SUBMIT_ALL;
+    params.sq_thread_idle = 2000;  /* 2 seconds */ // this means it will not get slept during our simulation basically.
+    params.sq_thread_cpu = 15;
+
+    io_uring_queue_init_params(batchSize, &ring, &params);
+
     struct io_uring_sqe *sqe{};
     struct io_uring_cqe *cqe{};
     // design for the simulator is just going to be adding a vectorized send and then looping on completion queue returns. Going to keep a count to ensure n message requests are always in SQ
@@ -145,14 +149,14 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
 
 
     // build initial messages
-    for(int i{}; i < batchSize*concurrent; ++i){
+    for(int i{}; i < batchSize; ++i){
         generator.generate(&sendBuffer[i]); 
     }    
 
     // fill up queue on init!
-    for (std::int64_t i{}; i < concurrent; ++i){
+    for (std::int64_t i{}; i < batchSize; ++i){
         sqe = io_uring_get_sqe(&ring);
-        io_uring_prep_send(sqe, sockfd, &iovecs[batchSize*i], batchSize, IORING_SEND_VECTORIZED);
+        io_uring_prep_send(sqe, sockfd, &sendBuffer[i], UMSG_GLOBALS::MSG_MAX_SIZE, 0);
         io_uring_sqe_set_data64(sqe, i);
         io_uring_submit(&ring);
     }
@@ -176,13 +180,15 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
         }
         
         // generate new data for batch
-        for(int i{}; i < batchSize; ++i){
-            generator.generate(&sendBuffer[i+replacingIndex*batchSize]);
-        }
+        generator.generate(&sendBuffer[replacingIndex]);
+        
         // send message
         sqe = io_uring_get_sqe(&ring);
-        io_uring_prep_send(sqe, sockfd, &iovecs[batchSize*replacingIndex], batchSize, IORING_SEND_VECTORIZED);
+        io_uring_prep_send(sqe, sockfd, &sendBuffer[replacingIndex], UMSG_GLOBALS::MSG_MAX_SIZE, 0);
         io_uring_sqe_set_data64(sqe, replacingIndex);
         io_uring_submit(&ring);
+        std::this_thread::sleep_for(std::chrono::microseconds(1)); // stop at 512k
     }
+    std::cout << counter << std::endl;
+    io_uring_queue_exit(&ring);
 }
