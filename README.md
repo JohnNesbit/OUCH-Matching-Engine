@@ -4,10 +4,6 @@ This project works to implement an orderbook which operates on the NASDAQ OUCH o
 
 Right now, it is implemented with a SPSC reading from a single UDP port with batched I/O syscalls, and I am working on an io_uring implementation. 
 
-## 0. Setup
-
-The setup simulation for this work is simple: one core on my machine will continually run the batched linux syscall sendmmsg() to read from pointers to a static generated OUCH message buffer. We populate the buffer with a cheap random OUCH generator function. On my linux box it generates 152k packets/sec on a non-blocked syscall core-bound loop. This will change as my OrderBook can support higher throughput.
-
 ## 1. Single Producer Single Consumer(Batched IO Syscalls)
 
 The Producer and Consumer both run bound to seperate cores. Because both the Producer and Consumer use batched syscalls, we have both a tail and head pointer for the ring buffer which makes batched read/writes easy. Producer gets UDP messages using recvmmgs(). We use std::atomic with release memory orderings for the tail and head pointer updates, however, for reading the tail in the Consumer thread, we don't use the traditional acquire pairing. Because the tail monotonically increases, getting an outdated value is not an issue, and since the buffer write is "happens before" the tail index update, we can use a relaxed memory order to allow for the speculative execution of the consumer on the buffer. On intel machines, however, they compile into the same instructions.
@@ -84,7 +80,6 @@ The architecture of a SPSC queue starts making a lot less sense when putting in 
 
 IOSQE_CQE_SKIP_SUCCESS - will only poll buffer that iovec points to, no need for CQE unless debugging.
 
-
 So, our situation now is that we have a consumer and a simulator thread and on top of that, we have two io_uring kernel threads which poll the SQs and do I/O from there. Using perf across threads, we can see that the consumer and I/O threads are never slept, however, our consumer is far behind the simulator and has a lower!! Number of messages taken in than the pure syscall thread.
 
 wierd, okay, I was wondering if somehow the simulator's unreadonable number and consumer problems could be linked. Adding a simply 1 microsecond thread wait to the simulator causes its output to drop to 50k but a syscall consumer on that io_uring simulator drops to literally 1k. How are these connected? Why would the scheduler connect them in this way?
@@ -96,9 +91,7 @@ Well, if we want to solve the problem at 12 million/sec, we'd better solve it at
 
 lets check our hypothesis to see if it is getting booted out by the OS:
 
-screenshot
-
-Yup as, we can see, the consumer and simulator cores are 50% and 50% of cpu-time, the producer core is somehow getting slept rather than busy waiting on the simulator. How can we rememdy this?
+We can see the consumer and simulator cores are 50% and 50% of cpu-time, the producer core is somehow getting slept rather than busy waiting on the simulator. How can we rememdy this?
 
 ## 3. Kernel Bypass
 
