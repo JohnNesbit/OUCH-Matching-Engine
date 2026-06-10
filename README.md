@@ -70,30 +70,15 @@ Huh... I think I misinterpreted our last perf. I assumed that since only half of
 
 ![](Images/uringTime.png)
 
-Well, it is just doing the send syscall the entire time. Looks like our bottleneck is wholly just this syscall. We've already stopped the nethooks and this is just doing the direct to the xmit transmission queue and back. Its time to get rid of some of this syscall overhead. Io_uring time!
+Well, it is just doing the send syscall the entire time. Looks like our bottleneck is wholly just this sendmmsg. We've already stopped the nethooks and this is just doing the direct to the xmit transmission queue and back.
 
 At this point, I should note that I am switching over to a different reference machine with 8 physical cores which will allow pinning differently. With the machine switch we get to 500k/s. That machine is running a 8840HS Ryzen 7 processor with 16GB of RAM on Linux Kernel 7.0.
 
 ## 2. IO_URING
 
-The architecture of a SPSC queue starts making a lot less sense when putting in a read call has almost no overhead(like with IO_URING). It makes a lot more sense in the scenario to only have a consumer thread. We will still maintain a ring buffer, but we will use it quite differently. Because an orderbook needs to maintain in-order execution, we will loop linearly through our ring buffer on our consumer. When we consume an object, we will zero out the memory and put a SQE on the io_uring mmaped SQ ring buffer. Because we will pre-build our SQE struct, we can just memcpy and edit the pointer value which is optimized into a single write operation. We also don't give up batching recv because we can do multiple consumes before sending those buffer spots out to the kernel(although we will see if this even matters).
+After some experimentation here(Which resulted in code for a UringExchange executable which was marginally slower than the Syscall one), I found io_uring to likely NOT be the solution to this problem. Instead, it introduced more overhead through dealing with the queue entries(since even multishot requires a whole lot of that). Since our blocking in recvmmsg is likely not really the context switch since so much of the overhead is amortized, it is probably worth investigating some sort of SoftIRQ balancing to allow for more recvmmsg and sendmmsg calls to actually happen.
 
-IOSQE_CQE_SKIP_SUCCESS - will only poll buffer that iovec points to, no need for CQE unless debugging.
-
-So, our situation now is that we have a consumer and a simulator thread and on top of that, we have two io_uring kernel threads which poll the SQs and do I/O from there. Using perf across threads, we can see that the consumer and I/O threads are never slept, however, our consumer is far behind the simulator and has a lower!! Number of messages taken in than the pure syscall thread.
-
-wierd, okay, I was wondering if somehow the simulator's unreadonable number and consumer problems could be linked. Adding a simply 1 microsecond thread wait to the simulator causes its output to drop to 50k but a syscall consumer on that io_uring simulator drops to literally 1k. How are these connected? Why would the scheduler connect them in this way?
-
-we know both IO threads are active and pegged because of how they are configured, but sleeping the simulator somehow causes this huge issue for hte consumer. Why? You would expect a higher hit rate, not a lower one. The scheduler for sure has to do the context switching overhead and everything for the simulator thread but... that is kinda part of the wait? Could this be somehow ejecting the consumer?
-Yes. What happens when the consumer is actually scheduled-out due to busy waiting for too long? Creates a problem of consumer getting switched in and out while each message happens, loosing some messages which occur in the time of context switching in and out?
-
-Well, if we want to solve the problem at 12 million/sec, we'd better solve it at 50k/s. Why is this happening?
-
-lets check our hypothesis to see if it is getting booted out by the OS:
-
-We can see the consumer and simulator cores are 50% and 50% of cpu-time, the producer core is somehow getting slept rather than busy waiting on the simulator. How can we rememdy this?
-
-## 3. Kernel Bypass
+## Past Naivety
 
 ## 4. AI Usage
 
