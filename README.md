@@ -4,10 +4,6 @@ This project works to implement an orderbook which operates on the NASDAQ OUCH o
 
 Right now, it is implemented with a SPSC reading from a single UDP port with batched I/O syscalls, and I am working on an io_uring implementation. 
 
-## 0. Setup
-
-The setup simulation for this work is simple: one core on my machine will continually run the batched linux syscall sendmmsg() to read from pointers to a static generated OUCH message buffer. We populate the buffer with a cheap random OUCH generator function. On my linux box it generates 152k packets/sec on a non-blocked syscall core-bound loop. This will change as my OrderBook can support higher throughput.
-
 ## 1. Single Producer Single Consumer(Batched IO Syscalls)
 
 The Producer and Consumer both run bound to seperate cores. Because both the Producer and Consumer use batched syscalls, we have both a tail and head pointer for the ring buffer which makes batched read/writes easy. Producer gets UDP messages using recvmmgs(). We use std::atomic with release memory orderings for the tail and head pointer updates, however, for reading the tail in the Consumer thread, we don't use the traditional acquire pairing. Because the tail monotonically increases, getting an outdated value is not an issue, and since the buffer write is "happens before" the tail index update, we can use a relaxed memory order to allow for the speculative execution of the consumer on the buffer. On intel machines, however, they compile into the same instructions.
@@ -70,19 +66,49 @@ The redesign is this: keep all the orders in memory in a token -> order hashmap.
 
 ![](Images/postOptimizedConsumer.png)
 
-if the small percentage of high overhead calls... increase buffer size!
+Huh... I think I misinterpreted our last perf. I assumed that since only half of the producer was spent in recvmmsg, it must be waiting on the consumer, however, now with the consumer only spending 2% of its time actually consuming and the rest of the time waiting, I realize that if the recvmmsg call immediately returns with only a couple messages often, it will look like we are spinning on the consumer because we are continually loading the atomic for how much we can add to the ring buffer. In reality, our bottleneck could actually be because of recvmmsg not getting much at a time. So, lets look at the simulator:
 
-Wow... I toyed around with the parameters and was really was suprised by this. Increasing the size of the simulator send batches to 2048 just gave 750k/s.... However, increasing the size of the producer gave almost no gains in processed packets, rather, it caps out at 380k/s. This is really interesting partially because when we increase the size of the buffer, which should amortize the more expensive cleanup/realloc consumer calls and make the consumer more consistent, it doesn't help at all. A couple things could be the case here: the first is just that we have a much slower consumer than producer. The second is just that we are bound somehow on the speed of writes to userspace. We havent had a SPSC-bound system in a little while so lets see what is going on here.
+![](Images/uringTime.png)
+
+Well, it is just doing the send syscall the entire time. Looks like our bottleneck is wholly just this sendmmsg. We've already stopped the nethooks and this is just doing the direct to the xmit transmission queue and back.
+
+At this point, I should note that I am switching over to a different reference machine with 8 physical cores which will allow pinning differently. With the machine switch we get to 370k/s. That machine is running a 8840HS Ryzen 7 processor with 16GB of RAM on Linux Kernel 7.0.
+
+## 2. IO_URING
+
+After some experimentation here(Which resulted in code for a UringExchange executable which was marginally slower than the Syscall one), I found io_uring to likely NOT be the solution to this problem. Instead, it introduced more overhead through dealing with the queue entries(since even multishot requires a whole lot of that). Since our blocking in recvmmsg is likely not really the context switch since so much of the overhead is amortized, it is probably worth investigating some sort of SoftIRQ balancing to allow for more recvmmsg and sendmmsg calls to actually happen.
+
+## Past Naivety
+
+So, since the IO_Uring really did not work in terms of throughput and overhead(I'm sure it might be better on latency, but I am not building for latency here due to that being a bite trite/played out). The question then is how I can use the rest of the cores on my machine to handle softIRQs in a way that makes sense(currently being handled by one CPU which is the same one that delivers the udp packets to the mit_queue makes absolutely zero sense becasue basically everything is on that one core).
+
+https://docs.kernel.org/networking/scaling.html gives us a way to balance the recv udp softIRQs triggered by the hardIRQ from sending a packet to a veth to the non-pinned cores. This allows us to use all of our physical cores to do the network stack work. To do this, I just pinned our SPSC and simulator cores to seperate physical cores:
+
+![](Images/CPUConfig.png)
+
+consumerCore = 11;// physical core 5
+senderCore = 13; // phyiscal core 6
+producerCore = 15; // physical core 7
+The rest of the cores we set for RPS: cores 0,1,2,3,4 which is 0 through logical core 9 using:
+
+'''sudo ip netns exec receiver_ns sh -c 'echo 3ff > /sys/class/net/veth-rx/queues/rx-0/rps_cpus' '''
+
+and 
+
+'''GRUB_CMDLINE_LINUX_DEFAULT="isolcpus=10-15 rcu_nocbs=10-15 nohz_full=10-15 irqaffinity=0-9"'''
+in /etc/default/grub
+
+This gets us to ~480k/s on the SPSC and about 530k/s on the sender!! That is a massive improvement, and shows that we now are bound on the SPSC presumably :)
+
+Now, lets see where thet bottleneck is now?
+
+![](Images/AfterBindingHPET.png)
+
+Huh... the high-precision clock is our bottleneck? A google shows a potential reason: https://news.ycombinator.com/item?id=28661455. Well, actually this makes sense since I am on a laptop and obviously TSC could be a problem due to battery being inconsistent, sleeping, etc.
+
+So! I will change back to my linux box:
 
 
-
-interestingly, the split on everything is the exact same... it never was the sender. So, what is going on here? Consumer only spends 5% of its time doing anything other than waiting, but Producer says it is spending 30% of its time waiting on the Consumer? This doesn't even change when upping the buffer size 100x. Huh?
-
-## 2. Multiplexed Ports and Async IO
-
-Currently working on this. From what I've read, linux spinlocks on each port are a bottleneck since I/O is treated as a normal process(and can thus be happening on multiple cores at the same time). Also, the syscall overhead for context switching can be eliminated with memory mapped ring buffers in io_uring.
-
-## 3. Kernel Bypass
 
 ## 4. AI Usage
 

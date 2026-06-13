@@ -29,7 +29,6 @@ void ConsumeQueue(std::atomic<bool>& terminateFlag, int batchSize, queue<T>& q, 
         
         if (tail != head){ // if we havent caught up yet, consoom
             fetch = min(batchSize, maxPullc(tail, head, q.bufferSize));
-            //_mm_lfence(); // ensure we aren't speculatively false sharing the buffer
             for(int i{}; i < fetch; ++i){ //batch!
                 accumulator.consume(q.buffer[(head + i) % q.bufferSize]); // because the message is just a pointer to the aligned raw bytes in the buffer, pass by reference!
             } 

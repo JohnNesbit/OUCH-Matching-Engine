@@ -1,6 +1,5 @@
 #pragma once
 
-
 // parts of this file were AI-generated
 // replace and account information message types were ommitted.
 // I am assuming min_qty is 1 for ease of implementa

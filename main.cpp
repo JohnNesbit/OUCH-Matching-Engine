@@ -27,13 +27,8 @@ int main(int argc, char* argv[]){
 #endif
 
     int time{1000}; // one second experiment
-    constexpr int experimentLoops{10};
-    bool experimentFlag{false};
-    int port{8080}, bufferSize{128}, sendSize{128}; // changing the producer batch size requires changing queue.hpp constants
+    int port{8080}, bufferSize{128}, sendSize{64}; // changing the producer batch size requires changing queue.hpp constants
     switch (argc) { // intentionally fallthrough here
-        case 5:
-            experimentFlag = static_cast<bool>(std::atoi(argv[4]));
-            [[fallthrough]];
         case 4:
             sendSize = std::atoi(argv[3]);        
             [[fallthrough]];
@@ -43,51 +38,6 @@ int main(int argc, char* argv[]){
         case 2:
             port = std::atoi(argv[1]);
     }
-
-    if (experimentFlag){
-
-        // create incoming orders simulator(make terminate flag to exit after experiments!)
-        std::atomic<bool> terminateFlag{false};
-        exchangeSimulator<orderType> simulator(port+1, sendSize);
-        SPSC<orderType> exchangeQueue(bufferSize, port);
-
-        // start generator
-        generatorType generator{};
-
-        int accumulatedCount[experimentLoops];
-
-        for (int i{1}; i < experimentLoops; ++i){
-            // initalize orderbook for this run
-            accumulatorType accumulator{};
-            terminateFlag.store(true, std::memory_order_release);
-
-            // start simulation
-            std::thread exchangeThread([&simulator, &terminateFlag, &exchangeQueue, &generator](){
-                simulator.run<generatorType>(terminateFlag, exchangeQueue.getAddr(), generator);
-            });
-
-            // diff in sent and recv could be real or just this gap, try to test via looking at what the diff approaches
-            // as this spot approaches 0% of the time spent in the loop
-
-            // run producer and consumer
-            exchangeQueue.run<accumulatorType>(sendSize, accumulator, time*i);
-
-            // end simulation
-            terminateFlag.store(false, std::memory_order_release);
-            exchangeThread.join();
-
-            // print data
-            accumulatedCount[i] = accumulator.getCounter();
-            std::cout << "With " << i << " seconds: " << accumulatedCount[i] << " trades" << std::endl;
-            std::cout << "Trades sent so far: " << simulator.getCounter() << std::endl;
-            
-            simulator.clearCounter(); // clear simulator sent queue
-            exchangeQueue.resetObject(); // just clears queue via changing pointers :)
-            
-        }
-
-        return 0;
-    } 
 
     // create exchange
     accumulatorType accumulator{};
