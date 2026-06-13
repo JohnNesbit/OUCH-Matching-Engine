@@ -1,6 +1,17 @@
 #pragma once
 #include <cstdint>
 
+
+/*
+namespace globalConfigs {
+    constexpr int OuchMaxSize = 48;
+    constexpr int senderCore = 3; // phyiscal core 6
+    constexpr int producerCore = 1; // physical core 7
+    constexpr int consumerCore = 2;// physical core 5
+    // RPS on cores 0,1,2,3,4 which is through logical core 9
+}
+*/
+
 namespace globalConfigs {
     constexpr int OuchMaxSize = 48;
     constexpr int senderCore = 13; // phyiscal core 6
@@ -14,6 +25,8 @@ namespace MSG_GLOBALS {
     constexpr int MSG_MAX_SIZE = 48;//193; // max size of an OUCH message with all flags is 193 bytes
     constexpr double TIMEOUT = 100000; // 1ms timeout
 }
+
+#pragma pack(push, 1)
 
 struct OuchEnterOrderO {
     char type;             
@@ -48,3 +61,4 @@ struct OuchReplaceOrderO {
     char iso;
     uint32_t min_qty;
 };
+#pragma pack(pop)
