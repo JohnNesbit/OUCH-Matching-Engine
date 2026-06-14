@@ -39,7 +39,7 @@ namespace globalConfigs {
 
 
 namespace MSG_GLOBALS {
-    constexpr int MSG_BATCH_SIZE = 1; // for the producer
+    constexpr int MSG_BATCH_SIZE = 4; // for the producer
     constexpr int MSG_MAX_SIZE = 48;//193; // max size of an OUCH message with all flags is 193 bytes
     constexpr double TIMEOUT = 100000; // 1ms timeout
 }

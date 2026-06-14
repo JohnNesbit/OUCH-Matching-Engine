@@ -126,7 +126,20 @@ Wow, okay, doubling up on our senders gets us to 2 Million/sec, but our producer
 
 ![](Images/OnePer.png)
 
-Wow! Only one message per recvmmsg??? This is really bad.
+Wow! Only one message per recvmmsg??? If we tune down our recvmmsg to 4 per call, we see a huge increase since it is timing out less of the time, getting 1 Million/sec. The question here though is how we have literally double from our sent but we are bound on the fullness of the skb? We can see from a counter/calls accumulator that our exchangeSimulator actually is sending all of its 64 batch size per call successfully to its xmit, so... where do they go? We also can see that changing the simulator batch size does not impact the per call count. Lets increase the size of our recieve queue? It could be that we are having bursts that maybe saturate due to something like heat throttling? We don't have hypervisor interrupts so that can't be it.
+
+Lets change our buf size? sudo sysctl -w net.core.rmem_max=16777216
+No change! Well, are our packets all getting dumped due to softIRQs not getting delivered in time maybe? Lets perf the whole system instead of just our process cores!
+
+![](Images/idling.png)
+q
+Hmm, looks like they are basically idling, and they have an even share of on-CPU as the actual running ones? Maybe SMT actually does take some performance away from us even if we are isolating the cores by re-assigning IRQs on the logcial cores tied to physical cores with our processes running? Lets disable SMT and see how this changes. One of the big suprises for me as well is that there are no mention of the recvmmsg IRQs that I thought would be the bottleneck. Because our SMT is not context switching in any other processes though, it might not make sense for this to be actually limiting us in any way... hmm, I do think though, that not having any recvmmsg is suspicious. Because we have 152M events in this, I am going to decrease the percentage limit to zero and decrease the sampling so there is less overhead from that(it caused a bit of a blip on the machine which I am suspicious of).
+
+![](Images/irqBottleneck.png)
+
+Okay, looking closer, we actually see that under things like "do_idle" it is actually flushing the function queue, which includes softirqs and then other headers like ret_from_fork are actually returning from softIRQ functions. When I cut down on each category, every single one is just handling recvmmsg a couple layers down. on this core at least, it does look like the actual work being done is mostly in softIRQs handling recv. So, we are bound on our recvmmsg irqs... what now? Looking through our OS, every percentage point can be accounted for as working toward this system. It seems like the way to push this system would be to re-enable irqs on the second simulator core, which gives us a little more recvmmsg capability while bleeding off the excess sendmmsg. With that balancing, it will seem that we will really hit the limits of what this system can do without starting to optimize out things within the network stack + syscalls.
+
+At this point, the obvious next step seems to be some sort of kernel bypass because as of now, nearly our entire system is doing I/O handling. I will call this my stopping point to move on to another project, but I will likely re-visit this at some point.
 
 ## 4. AI Usage
 

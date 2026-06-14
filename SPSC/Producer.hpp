@@ -31,7 +31,7 @@ class Producer {
         int sockfd; 
         int port;
         int bufferSize;
-        int recvCount{};
+        int recvCount{0};
         struct iovec iovecs[MSG_GLOBALS::MSG_BATCH_SIZE];
         struct mmsghdr msgs[MSG_GLOBALS::MSG_BATCH_SIZE];
         struct timespec timeout;
@@ -84,5 +84,5 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
         }
     }
     std::cout << producerRecieved << std::endl;
-    std::cout << producerRecieved/recvCount << std::endl;
+    std::cout << producerRecieved/static_cast<float>(recvCount) << std::endl;
 }

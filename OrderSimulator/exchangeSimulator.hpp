@@ -61,6 +61,7 @@ class exchangeSimulator {
         int port;
         int batchSize;
         int counter{};
+        int calls{0};
         struct sockaddr_in addr;
         std::allocator<T> allocator; // define allocator before so member initializer list goes in the right order!
         std::unique_ptr<struct mmsghdr[]> msgs; // we use unique_ptr to C-style instead of vectors because vectors don't let us get non-const refs to their elements
@@ -163,9 +164,12 @@ void exchangeSimulator<T>::run(std::atomic<bool>& terminateFlag, const struct so
 
         */
         retval = sendmmsg(sockfd, msgs.get(), batchSize, 0);
+        calls++;
         counter+=retval;
+
         //if (retval < 0){
         //    std::cout << retval << std::endl;
         //}
     }
+    std::cout << "Avg per call: " << counter/static_cast<float>(calls) << std::endl;
 }
