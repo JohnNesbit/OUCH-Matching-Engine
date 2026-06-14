@@ -106,7 +106,9 @@ Now, lets see where thet bottleneck is now?
 
 Huh... the high-precision clock is our bottleneck? A google shows a potential reason: https://news.ycombinator.com/item?id=28661455. Well, actually this makes sense since I am on a laptop and obviously TSC could be a problem due to battery being inconsistent, sleeping, etc.
 
-So! I will change back to my linux box:
+Because of this, I am actually going to start running benchmarks on a rented dedicated cloud machine from Hetzner, a dedicated ccx33(8 cores, 32GB RAM, AMD).
+
+Switching over, our picture changes:
 
 
 
