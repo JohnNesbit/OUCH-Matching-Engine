@@ -3,6 +3,7 @@
 #include <vector>
 #include "queue.hpp"
 #include <x86intrin.h>
+#include "config.hpp"
 
 // we need maxPull for the templated function so we just inline it so the compiler can generate the function template instantiations before linktime
 inline int maxPullc(int t, int h, int bufferSize){
@@ -16,7 +17,7 @@ void ConsumeQueue(std::atomic<bool>& terminateFlag, int batchSize, queue<T>& q, 
     
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(3, &cpuset); // Bind to core 3, not hyperthreaded with producer or sim
+    CPU_SET(globalConfigs::consumerCore, &cpuset); // Bind to core 3, not hyperthreaded with producer or sim
     pthread_t current_thread = pthread_self();
     pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset); 
 

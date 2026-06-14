@@ -27,7 +27,7 @@ int main(int argc, char* argv[]){
 #endif
 
     int time{1000}; // one second experiment
-    int port{8080}, bufferSize{128}, sendSize{64}; // changing the producer batch size requires changing queue.hpp constants
+    int port{8080}, bufferSize{128}, sendSize{128}; // changing the producer batch size requires changing queue.hpp constants
     switch (argc) { // intentionally fallthrough here
         case 4:
             sendSize = std::atoi(argv[3]);        
@@ -39,7 +39,6 @@ int main(int argc, char* argv[]){
             port = std::atoi(argv[1]);
     }
 
-    // create exchange
     accumulatorType accumulator{};
     SPSC<orderType> exchangeQueue(bufferSize, port);
 
@@ -48,7 +47,6 @@ int main(int argc, char* argv[]){
     exchangeSimulator<orderType> simulator(port+1, sendSize);
     exchangeSimulator<orderType> simulator2(port+2, sendSize);
     
-    // start generator
     generatorType generator{};
     std::thread exchangeThread([&simulator, &terminateFlag, &exchangeQueue, &generator](){
         simulator.run<generatorType>(terminateFlag, exchangeQueue.getAddr(), generator, 0);
@@ -56,17 +54,16 @@ int main(int argc, char* argv[]){
 
     //std::this_thread::sleep_for(std::chrono::milliseconds(100)); // get rid of file ownership issue, won't take more than 1ms to read sender namespace, easier than doing some sharing thing
     generatorType generator2{};
-    std::thread exchangeThread2([&simulator2, &terminateFlag, &exchangeQueue, &generator2](){
-        simulator2.run<generatorType>(terminateFlag, exchangeQueue.getAddr(), generator2, 1);
-    });
+    //std::thread exchangeThread2([&simulator2, &terminateFlag, &exchangeQueue, &generator2](){
+    //    simulator2.run<generatorType>(terminateFlag, exchangeQueue.getAddr(), generator2, 1);
+    //});
 
-    // run producer and consumer
     exchangeQueue.run<accumulatorType>(sendSize, accumulator, time);
 
     // end simulation
     terminateFlag.store(true, std::memory_order_release);
     exchangeThread.join();
-    exchangeThread2.join();
+    //exchangeThread2.join();
 
     std::cout << "Total trades sent: " << simulator.getCounter() + simulator2.getCounter() << std::endl;
 
@@ -79,7 +76,7 @@ int main(int argc, char* argv[]){
     std::size_t numOrders{buyBook.size() + sellBook.size()};
     //pqObject p = buyBook.top();
     
-    /*
+    /* prints got to be too much when we hit millions
     while(!buyBook.empty()){
         p = buyBook.top();
         std::cout << "Side: B " << " Price: " << p.price << std::endl; // " Id: " << std::string(p.t.token, 14) << 

@@ -7,10 +7,6 @@
 #include "Consumer.hpp"
 #include "queue.hpp"
 
-
-// tail should be on a cell that does not have a value unless it is on the head in which case no adding will be done!
-// need to give the type and the accumulator btw
-
 template<class T>
 class SPSC {
     public:
@@ -49,7 +45,5 @@ void SPSC<T>::run(int consumeBatchSize, A& accumulator, int time){
 
     producerThread.join();
     consumerThread.join();
-
-    // can do stuff and look at what happens after everything exits!
 }
 
