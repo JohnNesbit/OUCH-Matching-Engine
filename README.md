@@ -80,7 +80,7 @@ After some experimentation here(Which resulted in code for a UringExchange execu
 
 ## Past Naivety
 
-So, since the IO_Uring really did not work in terms of throughput and overhead(I'm sure it might be better on latency, but I am not building for latency here due to that being a bite trite/played out). The question then is how I can use the rest of the cores on my machine to handle softIRQs in a way that makes sense(currently being handled by one CPU which is the same one that delivers the udp packets to the mit_queue makes absolutely zero sense becasue basically everything is on that one core).
+So, since the IO_Uring really did not work in terms of throughput and overhead(I'm sure it might be better on latency, but I am not building for latency here due to that being a bite trite/played out). The question then is how I can use the rest of the cores on my machine to handle softIRQs in a way that makes sense(currently being handled by one CPU which is the same one that delivers the udp packets to the xmit_queue makes absolutely zero sense becasue basically everything is on that one core).
 
 https://docs.kernel.org/networking/scaling.html gives us a way to balance the recv udp softIRQs triggered by the hardIRQ from sending a packet to a veth to the non-pinned cores. This allows us to use all of our physical cores to do the network stack work. To do this, I just pinned our SPSC and simulator cores to seperate physical cores:
 
