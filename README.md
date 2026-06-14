@@ -131,7 +131,7 @@ Wow! Only one message per recvmmsg??? If we tune down our recvmmsg to 4 per call
 Lets change our buf size? sudo sysctl -w net.core.rmem_max=16777216
 No change! Well, are our packets all getting dumped due to softIRQs not getting delivered in time maybe? Lets perf the whole system instead of just our process cores!
 
-![](Images/idling.png)
+![](Images/Idling.png)
 
 Hmm, looks like they are basically idling, and they have an even share of on-CPU as the actual running ones? Maybe SMT actually does take some performance away from us even if we are isolating the cores by re-assigning IRQs on the logcial cores tied to physical cores with our processes running? Lets disable SMT and see how this changes. One of the big suprises for me as well is that there are no mention of the recvmmsg IRQs that I thought would be the bottleneck. Because our SMT is not context switching in any other processes though, it might not make sense for this to be actually limiting us in any way... hmm, I do think though, that not having any recvmmsg is suspicious. Because we have 152M events in this, I am going to decrease the percentage limit to zero and decrease the sampling so there is less overhead from that(it caused a bit of a blip on the machine which I am suspicious of).
 
