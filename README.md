@@ -106,10 +106,19 @@ Now, lets see where thet bottleneck is now?
 
 Huh... the high-precision clock is our bottleneck? A google shows a potential reason: https://news.ycombinator.com/item?id=28661455. Well, actually this makes sense since I am on a laptop and obviously TSC could be a problem due to battery being inconsistent, sleeping, etc.
 
-Because of this, I am actually going to start running benchmarks on a rented dedicated cloud machine from Hetzner, a dedicated ccx33(8 cores, 32GB RAM, AMD).
+Because of this, I am actually going to start running benchmarks on a rented bare-metal from Vultr, a dedicated  E-2286G (6 cores, 32GB RAM).
 
-Switching over, our picture changes:
+Switching over, isolating our three cores for our busy-waits and balancing softIRQs on the other three, we get 730k/s messages. That is an improvement(to be expected) so lets look at what the bottleneck is at this point:
 
+![](Images/VultrSender.png)
+
+and for our producer(consumer shows entire time basically busy-waiting):
+
+![](Images/VultrProducer.png)
+
+Well, it seems clear what is happening here: only 10% of our producer is actually spent fetching for recvmmsg, it looks like the rest of the time it is basically busy-polling the socket and recvmmsg returns nothing(hence how the top syscall has a lot more percentage than the lower, it is just returning because the socket is empty seemingly). Similarly, we see a 2% spend on the function calculating the number of messages we can take it(which is only a couple instructions and no loads that wouldn't be cached presumably) so that really only can happen if we are polling a LOT and the rest of that ends up in the top of the recvmmsg syscall seemingly. Looking at the sender, we seemingly have maxed-out how many UDP packets we can actually send from one core. It is spending nearly 100% of the time in the core within the actual network stack! And all the recvmmsg softIRQs are offloaded too on this!
+
+So, lets bump it up? Why not grab another sender core to simulate even more messages and just see when the cracks start to show?
 
 
 ## 4. AI Usage
