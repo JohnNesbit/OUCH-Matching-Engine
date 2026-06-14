@@ -6,7 +6,6 @@
 #include "queue.hpp"
 #include "config.hpp"
 
-
 class Producer {
 
     public:
@@ -27,7 +26,6 @@ class Producer {
         Producer& operator=(Producer&&) = delete;
         Producer& operator=(const Producer&) = delete;
         */
-
 
     private:
         int sockfd; 
@@ -55,7 +53,6 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
     pthread_t current_thread = pthread_self();
     pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset); 
     
-
     // update msg
     int retval;
     int tail = q.bufferTailIndex.load(std::memory_order_relaxed);
@@ -63,8 +60,8 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
     int i{};
     while(!terminateFlag.load(std::memory_order_relaxed)){ // can use volatile here for intel bc of ordering guarentees; complies to same thing 
         i = 0; // maxPull calcs the number of cells left between tail and head so tail does not eat head!
-
-         // how do we actually need the compiler to order these accesses?
+        
+        // how do we actually need the compiler to order these accesses?
          // premature optimization for my brain :)
         for (; i < min(MSG_GLOBALS::MSG_BATCH_SIZE, maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++){//min( ,maxPull(tail, q.bufferHeadIndex.load(std::memory_order_relaxed))); i++) { // how do we vectorize this loop? -- optimzation potential with changing to struct of arrays for AVX
             //msgs[i].msg_hdr.msg_iov->iov_base = &q.buffer[tail+i % q.bufferSize] // update where to store messages! put at the tail of ring buffer
@@ -83,8 +80,6 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
         } else{
             std::cout << retval << std::endl;
         }
-        
     }
     std::cout << producerRecieved << std::endl;
-
 }

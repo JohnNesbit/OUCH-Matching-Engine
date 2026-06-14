@@ -120,6 +120,10 @@ Well, it seems clear what is happening here: only 10% of our producer is actuall
 
 So, lets bump it up? Why not grab another sender core to simulate even more messages and just see when the cracks start to show?
 
+![](Images/2MilSender.png)
+
+Wow, okay, doubling up on our senders gets us to 2 Million/sec, but our producer isn't actually seeing that in its queue? It still looks like it is exiting early the majority of the time. My suspicion is actually that this might be due to the batch sizes on these calls being too large so when the skb is full they deliver partials*or get rejected and take resources) and then we have to wait for the next softIRQ, causing lags on the producer. Sendmmsg actually doesnt error when the skb is full(obviously because recvmmsg puts into the skb).
+
 
 ## 4. AI Usage
 
