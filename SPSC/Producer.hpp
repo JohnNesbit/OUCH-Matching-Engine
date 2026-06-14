@@ -31,6 +31,7 @@ class Producer {
         int sockfd; 
         int port;
         int bufferSize;
+        int recvCount{};
         struct iovec iovecs[MSG_GLOBALS::MSG_BATCH_SIZE];
         struct mmsghdr msgs[MSG_GLOBALS::MSG_BATCH_SIZE];
         struct timespec timeout;
@@ -74,6 +75,7 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
         // this just tells kernel to write our messages to the buffer, we update where our tail is, and we keep going!
         retval = recvmmsg(sockfd, msgs, i, 0, &timeout); // we only want to give the amount of messages as max that we can add to the ring buffer legally
         if (retval >= 0){
+            recvCount++;
             producerRecieved += retval;
             tail = (retval + tail) % q.bufferSize;
             q.bufferTailIndex.store(tail, std::memory_order_release);  // don't want to fill in the buffer after telling the conusmer we have, release adds a fence here so we dont
@@ -82,4 +84,5 @@ void Producer::PollSocket(std::atomic<bool>& terminateFlag, queue<T>& q){ //epol
         }
     }
     std::cout << producerRecieved << std::endl;
+    std::cout << producerRecieved/recvCount << std::endl;
 }

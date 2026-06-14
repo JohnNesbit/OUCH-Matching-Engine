@@ -124,6 +124,9 @@ So, lets bump it up? Why not grab another sender core to simulate even more mess
 
 Wow, okay, doubling up on our senders gets us to 2 Million/sec, but our producer isn't actually seeing that in its queue? It still looks like it is exiting early the majority of the time. My suspicion is actually that this might be due to the batch sizes on these calls being too large so when the skb is full they deliver partials*or get rejected and take resources) and then we have to wait for the next softIRQ, causing lags on the producer. Sendmmsg actually doesnt error when the skb is full(obviously because recvmmsg puts into the skb).
 
+![](Images/OnePer.png)
+
+Wow! Only one message per recvmmsg??? This is really bad.
 
 ## 4. AI Usage
 
