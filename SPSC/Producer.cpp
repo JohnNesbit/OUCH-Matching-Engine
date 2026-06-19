@@ -6,6 +6,7 @@
 #include "Producer.hpp"
 #include "SPSC.hpp"
 #include <sched.h>
+#include <time.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <iostream>
@@ -62,7 +63,7 @@ Producer::Producer (int port, int bufferSize)
     { 
         throw std::runtime_error("bind failed"); 
     }
-    
+
     if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, "veth-rx", sizeof("veth-rx")) < 0){
         throw std::runtime_error("Producer could not bind to network interface");
     }

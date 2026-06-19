@@ -1,10 +1,36 @@
-# OUCH OrderBook
+# OUCH Matching-Engine
 
-This project works to implement an orderbook which operates on the NASDAQ OUCH order format which can process as many orders as possible. I am giving myself a time limit of a week to see how far I can push this implementation.
+## Project Overview
+This project works to implement a price-time exchange running on the NASDAQ OUCH format. To give myself a different route for exploration than many have before in projects like these, I am choosing to implement an anti-low-latency exchange based on similar logic to IEX which will execute all trades in a price-time manner at intervals of 100ms(i.e. every 100ms all pending trades timestammped before that set time are executed). This setup causes the exchange engineering question to be much more about throughput than about latency concerns(since we can timestamp packets and execute asynchronously). Because of that design choice, this project is mostly an experiment on using profiling tools and understanding the internals to linux to optimize throughput. This project ended up taking about 100 hours of work to implement and get a grasp on all these tools. I wrote down my entire path to get where I ended up in this readme as a sort of engineering journal, and I hope this read gifts you some mechanical sympathy as it did me :)
 
 Right now, it is implemented with a SPSC reading from a single UDP port with batched I/O syscalls, and I am working on an io_uring implementation. 
 
-## 1. Single Producer Single Consumer(Batched IO Syscalls)
+## Setup, Configurations, and Machine-aware variables
+
+Since this repo must be bound to machine cores properly to work, setup is a bit more involved than running make. First, you need to find what cores are pinnable logically and physically. I would reccomend isolating logical cores whose hyperthreaded twins are isolated for best performance. By running 
+
+`lscpu -e`
+
+You can see all of your machine's logical processors and what physical cores they correspond to. This script is set up to use three pinned isolated cores and one non-isolated core. To configure, put a comma seperated list of the indecies of logical cores you want to pin to and isolate on the first line. Put your non-pinned, non-isolated core on the second line. On the third line, put a list of all of the logical processors that you want RPS(soft IRQ balancer) to send IRQs to. This list should probably be all of the logical processors that are not pinned to the same physical core as your pinned, isolated cores. The fourth line should be a list of the logical processors that you want isolated. This list should most likely be all of the logical processors which are being used by the first line(pinned for this application) or the hyperthreading pairs of those cores.
+
+Once this step is done, you can run
+
+`sudo sh ./setup.sh`
+
+to configure your kernel with these settings. After this is done, you can reboot to have these changes take place. Once your kernel is configured, you can make this project and run it!
+
+This is as simple as 
+
+`make -B ./build`
+
+`make --build ./build`
+
+`sudo run.sh`
+
+After which you will get a readout from the simulated exchange for the results of the run. Additional configurations like port and IO batchsizes can be set within run.sh in the arg order of port, bufferSize(for the SPSC ring buffer), and sendSize(for the exchange batched sendmmsg calls).
+
+
+## 1. A First Attempt: SPSC + Batched IO Syscalls
 
 The Producer and Consumer both run bound to seperate cores. Because both the Producer and Consumer use batched syscalls, we have both a tail and head pointer for the ring buffer which makes batched read/writes easy. Producer gets UDP messages using recvmmgs(). We use std::atomic with release memory orderings for the tail and head pointer updates, however, for reading the tail in the Consumer thread, we don't use the traditional acquire pairing. Because the tail monotonically increases, getting an outdated value is not an issue, and since the buffer write is "happens before" the tail index update, we can use a relaxed memory order to allow for the speculative execution of the consumer on the buffer. On intel machines, however, they compile into the same instructions.
 
@@ -22,7 +48,7 @@ It looks like about 30% of this recvmmsg is in the context switching and syscall
 
 As for the lack of packets coming in, I was suprised since when I ran an analysis of sent/recieved packets to see if that was the bottleneck, I got this chart:
 
-![](Images/sentTrafficVsRecieved.png)
+<img src="Images/sentTrafficVsRecieved.png" width="50%" />
 
 What we see here is that as we increase the time of the simulation, the total packets obviously rise linearly, but the amount of packets recieved divided by the amount sent, the recieve rate, is not near 1 and not constant! We would expect a near-1 rate if our SPSC was actually bound on the number of orders coming in, however, this is not what we see. One possible explaination is that the SPSC has a higher startup overhead and the simulator sends a bunch of packets before it can start recieving, artifically lowering the recieve rate, however, if we increase the time, we would expect the recieve rate to then converge to one, and instead it stays constant. we see an 80% accept rate across all time horizons, which points to loss on the socket queue acceptance end(i.e tons of deliveries at once, overloading the queue leading to packet rejection).
 
@@ -74,11 +100,11 @@ Well, it is just doing the send syscall the entire time. Looks like our bottlene
 
 At this point, I should note that I am switching over to a different reference machine with 8 physical cores which will allow pinning differently. With the machine switch we get to 370k/s. That machine is running a 8840HS Ryzen 7 processor with 16GB of RAM on Linux Kernel 7.0.
 
-## 2. IO_URING
+## 2. The Right Tool: a free lunch io_uring is not
 
 After some experimentation here(Which resulted in code for a UringExchange executable which was marginally slower than the Syscall one), I found io_uring to likely NOT be the solution to this problem. Instead, it introduced more overhead through dealing with the queue entries(since even multishot requires a whole lot of that). Since our blocking in recvmmsg is likely not really the context switch since so much of the overhead is amortized, it is probably worth investigating some sort of SoftIRQ balancing to allow for more recvmmsg and sendmmsg calls to actually happen.
 
-## Past Naivety
+## 3. Past Naivety: laptops are LOUD
 
 So, since the IO_Uring really did not work in terms of throughput and overhead(I'm sure it might be better on latency, but I am not building for latency here due to that being a bite trite/played out). The question then is how I can use the rest of the cores on my machine to handle softIRQs in a way that makes sense(currently being handled by one CPU which is the same one that delivers the udp packets to the xmit_queue makes absolutely zero sense becasue basically everything is on that one core).
 
@@ -86,21 +112,18 @@ https://docs.kernel.org/networking/scaling.html gives us a way to balance the re
 
 ![](Images/CPUConfig.png)
 
-consumerCore = 11;// physical core 5
-senderCore = 13; // phyiscal core 6
-producerCore = 15; // physical core 7
+We pin the sender, consumer, and producer cores to 5, 6, and 7 respectively.
 The rest of the cores we set for RPS: cores 0,1,2,3,4 which is 0 through logical core 9 using:
 
-'''sudo ip netns exec receiver_ns sh -c 'echo 3ff > /sys/class/net/veth-rx/queues/rx-0/rps_cpus' '''
+`sudo ip netns exec receiver_ns sh -c 'echo 3ff > /sys/class/net/veth-rx/queues/rx-0/rps_cpus'`
 
 and 
 
-'''GRUB_CMDLINE_LINUX_DEFAULT="isolcpus=10-15 rcu_nocbs=10-15 nohz_full=10-15 irqaffinity=0-9"'''
-in /etc/default/grub
+`GRUB_CMDLINE_LINUX_DEFAULT="isolcpus=10-15 rcu_nocbs=10-15 nohz_full=10-15 irqaffinity=0-9"`
 
-This gets us to ~480k/s on the SPSC and about 530k/s on the sender!! That is a massive improvement, and shows that we now are bound on the SPSC presumably :)
+in /etc/default/grub gets us to ~480k/s on the SPSC and about 530k/s on the sender!! That is a massive improvement, and shows that we now are bound on the SPSC presumably :)
 
-Now, lets see where thet bottleneck is now?
+Now, lets see where thet bottleneck?
 
 ![](Images/AfterBindingHPET.png)
 
