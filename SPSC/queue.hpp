@@ -4,10 +4,6 @@
 
 inline int min(int a, int b) {return (a < b) ? a : b;}
 
-template<class T, class A>
-concept isConsumerOf = requires(T consumed, A consumer) {
-    {consumer.consume(consumed)} -> std::same_as<void>;
-};
 
 // we do std::allocator and break RAII so that T does not need to be default constructable!
 template <class T>

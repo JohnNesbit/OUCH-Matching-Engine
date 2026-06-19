@@ -15,5 +15,3 @@ sudo ip -n sender_ns link set lo up
 sudo ip -n receiver_ns addr add 10.0.0.1/24 dev veth-rx
 sudo ip -n receiver_ns link set veth-rx up
 sudo ip -n receiver_ns link set lo up
-
-sudo ip netns exec receiver_ns sh -c 'echo 1 > /sys/class/net/veth-rx/queues/rx-0/rps_cpus'

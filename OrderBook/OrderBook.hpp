@@ -1,6 +1,7 @@
 #pragma once
 #include <list>
 #include <limits>
+#include <chrono>
 #include <optional>
 #include <string_view>
 #include <atomic>
@@ -12,7 +13,7 @@
 
 struct OuchOrderWrapper {
     OuchEnterOrderO  e;
-    long id;
+    std::chrono::time_point<std::chrono::steady_clock>  timestamp;
 };
 
 struct token {
@@ -43,13 +44,14 @@ class OrderBook {
     public:
         OrderBook();
 
-        void consume(const OuchEnterOrder&); 
+        void consume(const OuchEnterOrder&, std::chrono::time_point<std::chrono::steady_clock>); 
         void updateMaxMin(int, int);
         void doTrade(OuchOrderWrapper& buyOrder, OuchOrderWrapper& sellOrder);
         long long checkFlowValid();
         long long checkSharesValid();
         std::unordered_map<std::uint32_t, long long>& getFirmShares(){return firmShares;}
         std::unordered_map<std::uint32_t, long long>& getFirmFlows(){return firmFlows;}
+        std::chrono::time_point<std::chrono::steady_clock> nextClearingTime{};
         long getCounter(){return OrderBook::counter;}
         auto& getBuyHeap(){return buyHeap;}
         auto& getSellHeap(){return sellHeap;}
@@ -63,8 +65,6 @@ class OrderBook {
         int currentMinSellPrice{std::numeric_limits<int>::max()};
         int currentMaxBuyPrice{};
         std::size_t maxSize{};
-
-        // test if it is worth it to map an int or a pointer to the token to accelerate the prefetching/ops on this
         
         std::priority_queue<pqObject, std::vector<pqObject>, 
                     decltype(maxHeapFunctor)> buyHeap; // largest first
@@ -73,12 +73,10 @@ class OrderBook {
 
         std::unordered_map<std::uint32_t, long long> firmShares; // hold shares in each company
         std::unordered_map<std::uint32_t, long long> firmFlows; // hold how much owed/owe
-        // hold company inflow and outflow
 
         // O(1) cancellation and replacement access
-        // could use std:ref here, but unorderded maps dont delete on erasure so this is fine as long as we remove from here when ever we pop()
-        std::unordered_map<token, OuchOrderWrapper> tokenMap; // just keep a map of token to order so that the daemon can deal with them when executing trades
-        // lower hot-path overhead for the consumer threads!
+        // the tokenMap has ownership here, PQ's have refs 
+        std::unordered_map<token, OuchOrderWrapper> tokenMap; 
 
         long counter{0};
 

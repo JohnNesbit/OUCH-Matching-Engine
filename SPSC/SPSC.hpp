@@ -13,14 +13,12 @@ class SPSC {
         SPSC(int bufferSize, int port) : q(bufferSize), prod(port, bufferSize) {}
 
         template<class A>
-        requires isConsumerOf<T, A>
         void run(int, A&, int);
         const struct sockaddr_in* getAddr(){return prod.getAddr();}
         void resetObject(){
             q.clear();
         }
 
-    private:
         queue<T> q;
         Producer prod; // prod''s only state is socket
         std::atomic<bool> terminateFlag{false};
@@ -28,7 +26,6 @@ class SPSC {
 
 template<class T>
 template<class A>
-requires isConsumerOf<T, A>
 void SPSC<T>::run(int consumeBatchSize, A& accumulator, int time){
 
     std::cout << "Starting...\n";

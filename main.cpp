@@ -1,6 +1,7 @@
 #include <string>
 #include <iostream>
 #include <thread>
+#include <chrono>
 #include <string_view>
 #include "SPSC/queue.hpp"
 #include "SPSC/Producer.hpp"
@@ -26,17 +27,32 @@ int main(int argc, char* argv[]){
     using generatorType = simpleGenerator; //OuchMockGenerator; simpleGenerator
 #endif
 
+    // goes pinned cores string, unpinned core, port, bufferSize, sendSize, experiment
+
     int time{1000}; // one second experiment
     int port{8080}, bufferSize{128}, sendSize{128}; // changing the producer batch size requires changing queue.hpp constants
+    bool experiment{false};
     switch (argc) { // intentionally fallthrough here
+        case 7:
+            experiment = true;
+            [[fallthrough]];
+        case 6:
+            sendSize = std::atoi(argv[5]);
+            [[fallthrough]];
+        case 5:
+            bufferSize = std::atoi(argv[4]);
+            [[fallthrough]];
         case 4:
-            sendSize = std::atoi(argv[3]);        
+            port = std::atoi(argv[3]);
             [[fallthrough]];
-        case 3:
-            bufferSize = std::atoi(argv[2]);
-            [[fallthrough]];
-        case 2:
-            port = std::atoi(argv[1]);
+        case 3: {
+            char* p = argv[1];
+            char* end;
+            globalConfigs::senderCore = strtol(p, &end, 10);
+            globalConfigs::producerCore = strtol(end + 1, &end, 10);
+            globalConfigs::consumerCore = strtol(end + 1, &end, 10);
+            globalConfigs::senderCore2 = std::atoi(argv[2]);
+        }
     }
 
     accumulatorType accumulator{};
@@ -45,7 +61,6 @@ int main(int argc, char* argv[]){
     // create incoming orders simulator(make terminate flag to exit after experiments!)
     std::atomic<bool> terminateFlag{false};
     exchangeSimulator<orderType> simulator(port+1, sendSize);
-    exchangeSimulator<orderType> simulator2(port+2, sendSize);
     
     generatorType generator{};
     std::thread exchangeThread([&simulator, &terminateFlag, &exchangeQueue, &generator](){
@@ -53,21 +68,37 @@ int main(int argc, char* argv[]){
     });
 
     //std::this_thread::sleep_for(std::chrono::milliseconds(100)); // get rid of file ownership issue, won't take more than 1ms to read sender namespace, easier than doing some sharing thing
-    generatorType generator2{};
-    //std::thread exchangeThread2([&simulator2, &terminateFlag, &exchangeQueue, &generator2](){
-    //    simulator2.run<generatorType>(terminateFlag, exchangeQueue.getAddr(), generator2, 1);
-    //});
+
+    if (experiment) {
+        for (int d : {1000, 2000, 3000, 4000, 5000}) {
+            accumulatorType acc{};
+            exchangeQueue.resetObject();
+            exchangeQueue.terminateFlag.store(false, std::memory_order_relaxed);
+            exchangeQueue.run<accumulatorType>(sendSize, acc, d);
+            std::cout << "RAMP," << d << "," << acc.getCounter() << std::endl;
+        }
+        for (int i = 1; i <= 10; ++i) {
+            accumulatorType acc{};
+            exchangeQueue.resetObject();
+            exchangeQueue.terminateFlag.store(false, std::memory_order_relaxed);
+            exchangeQueue.run<accumulatorType>(sendSize, acc, 5000);
+            std::cout << "STEADY," << i << "," << acc.getCounter() << std::endl;
+        }
+        terminateFlag.store(true, std::memory_order_release);
+        exchangeThread.join();
+        return 0;
+    }
 
     exchangeQueue.run<accumulatorType>(sendSize, accumulator, time);
 
     // end simulation
     terminateFlag.store(true, std::memory_order_release);
     exchangeThread.join();
-    //exchangeThread2.join();
 
-    std::cout << "Total trades sent: " << simulator.getCounter() + simulator2.getCounter() << std::endl;
+    std::cout << "Total trades sent: " << simulator.getCounter() << std::endl;
 
 #ifndef DEBUGSIM
+
     std::cout << "Checksum on orderbook(0 is correct): " << accumulator.checkFlowValid() << " and " << accumulator.checkSharesValid() << std::endl;
     std::cout << "Total trades processed: " << accumulator.getCounter() << std::endl;
 

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cstddef>
+#include <chrono>
 #include <string>
 #include <cstring>
 #include <string_view>
@@ -36,12 +37,13 @@ void OrderBook::updateMaxMin(int price, int side){
     
 }
 
+
 inline const token& charsToToken(const char* t){
     return *reinterpret_cast<const token*>(t);
 }
 
 void OrderBook::doTrade(OuchOrderWrapper& buyOrder, OuchOrderWrapper& sellOrder){
-    long price{buyOrder.id >= sellOrder.id ? buyOrder.e.price : sellOrder.e.price};
+    long price{buyOrder.e.price}; // this has a LOT of implications
     if (buyOrder.e.shares >= sellOrder.e.shares){
         buyOrder.e.shares -= sellOrder.e.shares;
         firmFlows[sellOrder.e.firm] += sellOrder.e.shares * price; // should definitely make these std::uint32 but we take almost no perf hit from this right now.
@@ -61,7 +63,35 @@ void OrderBook::doTrade(OuchOrderWrapper& buyOrder, OuchOrderWrapper& sellOrder)
 
 // NOTE: all of these are limit orders as specified by the OUCH standard
 __attribute__((noinline))
-void OrderBook::consume(const OuchEnterOrder& orderUncast) {
+void OrderBook::consume(const OuchEnterOrder& orderUncast, std::chrono::time_point<std::chrono::steady_clock> time) {
+    
+
+    maxSize = std::max(tokenMap.size(), maxSize);
+    
+    if (time > nextClearingTime){ // implicitly assumes more than 1 order per 100ms, this is fine
+        while(!buyHeap.empty() && !sellHeap.empty() && (buyHeap.top().price >= sellHeap.top().price)){
+
+            // get to max buy side 
+            while (!buyHeap.empty() && (tokenMap[buyHeap.top().t].e.type == 'X' || tokenMap[buyHeap.top().t].e.shares == 0)){
+                tokenMap.erase(buyHeap.top().t);
+                buyHeap.pop();
+            }
+
+            // minimum sell side 
+            while (!sellHeap.empty() && (tokenMap[sellHeap.top().t].e.type == 'X' || tokenMap[sellHeap.top().t].e.shares == 0)){
+                tokenMap.erase(sellHeap.top().t);
+                sellHeap.pop();
+                // this is scary because if this doesn't happen before BuyList we cooked
+            }
+
+            // do the trades and continue
+            if(!buyHeap.empty() && !sellHeap.empty()) {
+                doTrade(tokenMap[buyHeap.top().t], tokenMap[sellHeap.top().t]);
+            }
+        }
+        nextClearingTime += globalConfigs::interval;
+    }
+
     const OuchEnterOrderO& order = reinterpret_cast<const OuchEnterOrderO&>(orderUncast);
     ++OrderBook::counter;
     switch (order.type){
@@ -75,7 +105,7 @@ void OrderBook::consume(const OuchEnterOrder& orderUncast) {
 
             tokenMap.emplace(std::piecewise_construct,
                             std::forward_as_tuple(charsToToken(order.token)),
-                            std::forward_as_tuple(order, counter));
+                            std::forward_as_tuple(order, time));
             break;
         }
         case 'U':
@@ -98,7 +128,7 @@ void OrderBook::consume(const OuchEnterOrder& orderUncast) {
                 // create a new order for the replacement token and add it to the heap and hashmap
                 tokenMap.emplace(std::piecewise_construct,
                                 std::forward_as_tuple(charsToToken(replaceOrder.replacement_token)),
-                                std::forward_as_tuple(originalOrder, counter));
+                                std::forward_as_tuple(originalOrder, time));
 
 
                 if(originalOrder.side == 'S'){
@@ -122,26 +152,4 @@ void OrderBook::consume(const OuchEnterOrder& orderUncast) {
             break;
          }
     };
-
-    maxSize = std::max(tokenMap.size(), maxSize);
-    while(!buyHeap.empty() && !sellHeap.empty() && (buyHeap.top().price >= sellHeap.top().price)){
-
-        // get to max buy side 
-        while (!buyHeap.empty() && (tokenMap[buyHeap.top().t].e.type == 'X' || tokenMap[buyHeap.top().t].e.shares == 0)){
-            tokenMap.erase(buyHeap.top().t);
-            buyHeap.pop();
-        }
-
-        // minimum sell side 
-        while (!sellHeap.empty() && (tokenMap[sellHeap.top().t].e.type == 'X' || tokenMap[sellHeap.top().t].e.shares == 0)){
-            tokenMap.erase(sellHeap.top().t);
-            sellHeap.pop();
-             // this is scary because if this doesn't happen before BuyList we cooked
-        }
-
-        // do the trade and continue
-        if(!buyHeap.empty() && !sellHeap.empty()) {
-            doTrade(tokenMap[buyHeap.top().t], tokenMap[sellHeap.top().t]);
-        }
-    }
 }
