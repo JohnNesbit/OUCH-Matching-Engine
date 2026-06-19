@@ -11,21 +11,6 @@
 #include <unistd.h>
 #include <iostream>
 
-// how are we doing this batched SPSC?
-// we add to ring buffer in batches to minimize kernel mode switch overhead, fill in min(batch size, space left) chunks!
-
-// we dont want somethign to read while we write so lets set a "read boundary" and then we write
-// dont want to overwrite while we read(could happen with looping around) so need "write boundary"
-
-// do this with atomics basically, don't actually need locks since only one thread is writing each, only need fences to make sure we release memory when its okay to
-
-// so basically, we check lock status of things to find the boundary and then fill in up to that!
-// we have two atomics then: the tail and the head
-
-
-// structure: should probably have a "SPSC queue" class which owns the buffer, producer and consumer should not own the buffer
-// that structure makes the atomics and owns
-
 Producer::Producer (int port, int bufferSize)
                          : port{port}, bufferSize{bufferSize} {
             
